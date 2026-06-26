@@ -400,6 +400,86 @@ export function computeTeamGameResults(
   return out;
 }
 
+// ── Popp Koppen: time-based team scoring ──────────────────────
+// R1: all teams race, rank by time (lower = better).
+// Playoff: top-half race for final 1..half ranks; bottom-half for half+1..n ranks.
+// Pair teams consume two individual point slots; tiebreak splits them.
+
+export function computePoppKoppenResults(
+  gameId: string,
+  contestants: Contestant[],
+  teamPlayers: TeamGamePlayer[],
+  teamRankings: TeamGameRanking[],
+): Record<string, GameResult> {
+  const gamePlayers = teamPlayers.filter((p) => p.game_id === gameId);
+  const gameRankings = teamRankings.filter((r) => r.game_id === gameId);
+  const out: Record<string, GameResult> = {};
+
+  if (gamePlayers.length === 0) {
+    for (const c of contestants) out[c.id] = { points: null, isProvisional: false, rank: null };
+    return out;
+  }
+
+  const activeTeams = [...new Set(gamePlayers.map((p) => p.team_number))].sort((a, b) => a - b);
+  const n = activeTeams.length;
+  const half = Math.ceil(n / 2);
+
+  const r1Map = new Map<number, number>(
+    gameRankings.filter((r) => r.r1_time_seconds != null).map((r) => [r.team_number, r.r1_time_seconds!]),
+  );
+  const playoffMap = new Map<number, number>(
+    gameRankings.filter((r) => r.playoff_time_seconds != null).map((r) => [r.team_number, r.playoff_time_seconds!]),
+  );
+
+  const r1Sorted = [...activeTeams].filter((t) => r1Map.has(t)).sort((a, b) => r1Map.get(a)! - r1Map.get(b)!);
+  const allR1Done = r1Sorted.length === n;
+
+  // Build final ordered team list with provisional flag
+  let finalOrder: { teamNum: number; provisional: boolean }[];
+  if (!allR1Done) {
+    finalOrder = r1Sorted.map((t) => ({ teamNum: t, provisional: true }));
+  } else {
+    const topG = r1Sorted.slice(0, half);
+    const botG = r1Sorted.slice(half);
+    const topPO = [...topG].filter((t) => playoffMap.has(t)).sort((a, b) => playoffMap.get(a)! - playoffMap.get(b)!);
+    const botPO = [...botG].filter((t) => playoffMap.has(t)).sort((a, b) => playoffMap.get(a)! - playoffMap.get(b)!);
+    finalOrder = [
+      ...(topPO.length === topG.length ? topPO : topG).map((t) => ({ teamNum: t, provisional: topPO.length < topG.length })),
+      ...(botPO.length === botG.length ? botPO : botG).map((t) => ({ teamNum: t, provisional: botPO.length < botG.length })),
+    ];
+  }
+
+  // Assign individual points (pair teams consume two position slots)
+  let position = 1;
+  for (const { teamNum, provisional } of finalOrder) {
+    const members = gamePlayers.filter((p) => p.team_number === teamNum);
+    const ranking = gameRankings.find((r) => r.team_number === teamNum);
+    if (members.length === 1) {
+      out[members[0].contestant_id] = { points: POINTS[position] ?? 0, isProvisional: provisional, rank: position };
+      position += 1;
+    } else {
+      const highPts = POINTS[position] ?? 0;
+      const lowPts = POINTS[position + 1] ?? 0;
+      if (ranking?.tiebreak_winner_id && !provisional) {
+        for (const m of members) {
+          const isWinner = m.contestant_id === ranking.tiebreak_winner_id;
+          out[m.contestant_id] = { points: isWinner ? highPts : lowPts, isProvisional: false, rank: isWinner ? position : position + 1 };
+        }
+      } else {
+        for (const m of members) {
+          out[m.contestant_id] = { points: lowPts, isProvisional: true, rank: position };
+        }
+      }
+      position += 2;
+    }
+  }
+
+  for (const c of contestants) {
+    if (!out[c.id]) out[c.id] = { points: null, isProvisional: false, rank: null };
+  }
+  return out;
+}
+
 // ── Chessboard: derive team ranks from league matches ──────────
 // Points: win=3, draw=1, loss=0. Tiebreak: goal difference, then head-to-head
 
@@ -472,6 +552,8 @@ export function computeChessboardResults(
       team_number: team,
       rank,
       tiebreak_winner_id: stored?.tiebreak_winner_id ?? null,
+      r1_time_seconds: null,
+      playoff_time_seconds: null,
       updated_at: "",
     });
   }
@@ -525,7 +607,7 @@ export function computeLeaderboard(
           all = computeChessboardResults(game.id, contestants, teamPlayers, teamRankings, chessboardMatches);
           break;
         case "team_popp":
-          all = computeTeamGameResults(game.id, contestants, teamPlayers, teamRankings);
+          all = computePoppKoppenResults(game.id, contestants, teamPlayers, teamRankings);
           break;
         default:
           all = computeGameResults(game.id, contestants, round1, round2);

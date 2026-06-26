@@ -162,6 +162,20 @@ export async function upsertTeamRanking(
   );
 }
 
+export async function saveTeamR1Time(gameId: string, teamNumber: number, timeSeconds: number) {
+  return supabase.from("team_game_rankings").upsert(
+    { game_id: gameId, team_number: teamNumber, r1_time_seconds: timeSeconds, updated_at: new Date().toISOString() },
+    { onConflict: "game_id,team_number" },
+  );
+}
+
+export async function saveTeamPlayoffTime(gameId: string, teamNumber: number, timeSeconds: number) {
+  return supabase.from("team_game_rankings").upsert(
+    { game_id: gameId, team_number: teamNumber, playoff_time_seconds: timeSeconds, updated_at: new Date().toISOString() },
+    { onConflict: "game_id,team_number" },
+  );
+}
+
 // ── Chessboard matches ────────────────────────────────────────
 
 export async function upsertChessboardMatch(

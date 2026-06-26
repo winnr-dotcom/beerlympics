@@ -63,6 +63,8 @@ export type TeamGameRanking = {
   team_number: number;
   rank: number | null;
   tiebreak_winner_id: string | null;
+  r1_time_seconds: number | null;
+  playoff_time_seconds: number | null;
   updated_at: string;
 };
 

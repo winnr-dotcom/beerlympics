@@ -25,6 +25,8 @@ import {
   upsertCrockFinal,
   deleteCrockFinal,
   resetCrockGame,
+  saveTeamR1Time,
+  saveTeamPlayoffTime,
 } from "@/lib/api";
 import {
   parseTime,
@@ -705,10 +707,30 @@ function TiebreakersSetup({ game, data, ranks, onMutate }: {
 function PoppKoppenPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
   const [subTab, setSubTab] = useState<"teams" | "rankings" | "tiebreakers">("teams");
   const gamePlayers = data.teamPlayers.filter((p) => p.game_id === game.id);
-  const gameRankings = data.teamRankings.filter((r) => r.game_id === game.id && r.rank !== null);
+  const gameRankings = data.teamRankings.filter((r) => r.game_id === game.id);
+  const activeTeams = [1, 2, 3, 4, 5, 6].filter((t) => gamePlayers.some((p) => p.team_number === t));
+  const half = Math.ceil(activeTeams.length / 2);
 
-  // Build ranks map from stored rankings
-  const ranksMap = new Map<number, number>(gameRankings.map((r) => [r.team_number, r.rank!]));
+  // Compute team ranks from times (not stored rank column)
+  const r1Map = new Map<number, number>(
+    gameRankings.filter((r) => r.r1_time_seconds != null).map((r) => [r.team_number, r.r1_time_seconds!]),
+  );
+  const playoffMap = new Map<number, number>(
+    gameRankings.filter((r) => r.playoff_time_seconds != null).map((r) => [r.team_number, r.playoff_time_seconds!]),
+  );
+  const r1Ranked = [...activeTeams].filter((t) => r1Map.has(t)).sort((a, b) => r1Map.get(a)! - r1Map.get(b)!);
+  const allR1Done = r1Ranked.length === activeTeams.length;
+  const ranksMap = new Map<number, number>();
+  if (allR1Done) {
+    const topG = r1Ranked.slice(0, half);
+    const botG = r1Ranked.slice(half);
+    const topPO = [...topG].filter((t) => playoffMap.has(t)).sort((a, b) => playoffMap.get(a)! - playoffMap.get(b)!);
+    const botPO = [...botG].filter((t) => playoffMap.has(t)).sort((a, b) => playoffMap.get(a)! - playoffMap.get(b)!);
+    (topPO.length === topG.length ? topPO : topG).forEach((t, i) => ranksMap.set(t, i + 1));
+    (botPO.length === botG.length ? botPO : botG).forEach((t, i) => ranksMap.set(t, half + i + 1));
+  } else {
+    r1Ranked.forEach((t, i) => ranksMap.set(t, i + 1));
+  }
 
   return (
     <div>
@@ -732,11 +754,14 @@ function PoppKoppenRankings({ game, data, onMutate }: { game: BLGame; data: Fetc
   const gamePlayers = data.teamPlayers.filter((p) => p.game_id === game.id);
   const gameRankings = data.teamRankings.filter((r) => r.game_id === game.id);
 
-  const [rankDraft, setRankDraft] = useState<Record<number, string>>(() => {
+  const [r1Draft, setR1Draft] = useState<Record<number, string>>(() => {
     const init: Record<number, string> = {};
-    for (const r of gameRankings) {
-      if (r.rank !== null) init[r.team_number] = r.rank.toString();
-    }
+    for (const r of gameRankings) if (r.r1_time_seconds != null) init[r.team_number] = formatTime(r.r1_time_seconds);
+    return init;
+  });
+  const [playoffDraft, setPlayoffDraft] = useState<Record<number, string>>(() => {
+    const init: Record<number, string> = {};
+    for (const r of gameRankings) if (r.playoff_time_seconds != null) init[r.team_number] = formatTime(r.playoff_time_seconds);
     return init;
   });
 
@@ -744,57 +769,131 @@ function PoppKoppenRankings({ game, data, onMutate }: { game: BLGame; data: Fetc
     return <p className="text-sm text-zinc-600 py-4 text-center">Set teams first</p>;
   }
 
-  const getName = (id: string) => {
-    const c = data.contestants.find((x) => x.id === id);
-    return c ? (c.nickname ?? c.full_name.split(" ")[0]) : "?";
-  };
-  const ORDINALS = ["", "1st", "2nd", "3rd", "4th", "5th", "6th"];
+  const getName = (id: string) => { const c = data.contestants.find((x) => x.id === id); return c ? (c.nickname ?? c.full_name.split(" ")[0]) : "?"; };
+  const getTeamLabel = (t: number) => gamePlayers.filter((p) => p.team_number === t).map((p) => getName(p.contestant_id)).join(" + ");
+  const ord = (n: number) => n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : `${n}th`;
 
-  // Show all teams that have at least 1 member assigned
   const activeTeams = [1, 2, 3, 4, 5, 6].filter((t) => gamePlayers.some((p) => p.team_number === t));
+  const n = activeTeams.length;
+  const half = Math.ceil(n / 2);
+
+  const r1Saved = new Map<number, number>(
+    gameRankings.filter((r) => r.r1_time_seconds != null).map((r) => [r.team_number, r.r1_time_seconds!]),
+  );
+  const playoffSaved = new Map<number, number>(
+    gameRankings.filter((r) => r.playoff_time_seconds != null).map((r) => [r.team_number, r.playoff_time_seconds!]),
+  );
+  const r1Ranked = [...activeTeams].filter((t) => r1Saved.has(t)).sort((a, b) => r1Saved.get(a)! - r1Saved.get(b)!);
+  const allR1Done = r1Ranked.length === n;
+  const topGroup = allR1Done ? r1Ranked.slice(0, half) : [];
+  const botGroup = allR1Done ? r1Ranked.slice(half) : [];
+
+  async function handleR1Save(teamNum: number) {
+    const secs = parseTime(r1Draft[teamNum] ?? "");
+    if (secs === null) { toast.error("Invalid time — use M:SS"); return; }
+    const { error } = await saveTeamR1Time(game.id, teamNum, secs);
+    if (error) { toast.error("Save failed"); return; }
+    toast.success(`Team ${teamNum} R1 time saved`);
+    onMutate();
+  }
+
+  async function handlePlayoffSave(teamNum: number) {
+    const secs = parseTime(playoffDraft[teamNum] ?? "");
+    if (secs === null) { toast.error("Invalid time — use M:SS"); return; }
+    const { error } = await saveTeamPlayoffTime(game.id, teamNum, secs);
+    if (error) { toast.error("Save failed"); return; }
+    toast.success(`Team ${teamNum} playoff time saved`);
+    onMutate();
+  }
+
+  function TimeRow({ teamNum, draft, setDraft, savedTime, onSave, accent }: {
+    teamNum: number; draft: Record<number, string>; setDraft: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+    savedTime: number | null; onSave: () => void; accent?: boolean;
+  }) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-zinc-800 px-3 py-2.5">
+        <div className="min-w-0 flex-1">
+          <p className={`text-[11px] font-semibold ${accent ? "text-amber-500" : "text-zinc-500"}`}>Team {teamNum}</p>
+          <p className="text-sm text-zinc-300 truncate">{getTeamLabel(teamNum)}</p>
+        </div>
+        {savedTime != null && <span className="text-xs font-mono text-zinc-500">{formatTime(savedTime)}</span>}
+        <input
+          type="text" value={draft[teamNum] ?? ""} placeholder="M:SS"
+          onChange={(e) => setDraft((p) => ({ ...p, [teamNum]: e.target.value }))}
+          onKeyDown={(e) => { if (e.key === "Enter") onSave(); }}
+          className="w-20 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-2 text-center text-sm text-white placeholder-zinc-600 focus:border-amber-500 focus:outline-none"
+        />
+        <button onClick={onSave}
+          className="rounded-lg bg-amber-500 px-3 py-2 text-sm font-semibold text-black hover:bg-amber-400 touch-manipulation"
+          style={{ WebkitTapHighlightColor: "transparent" }}>
+          Save
+        </button>
+      </div>
+    );
+  }
+
+  function StandingsBox({ teams, timeMap, offset }: { teams: number[]; timeMap: Map<number, number>; offset: number }) {
+    const ranked = [...teams].filter((t) => timeMap.has(t)).sort((a, b) => timeMap.get(a)! - timeMap.get(b)!);
+    if (ranked.length === 0) return null;
+    return (
+      <div className="mt-2 space-y-1 rounded border border-zinc-800/50 px-3 py-2">
+        {ranked.map((t, i) => (
+          <div key={t} className="flex items-center justify-between text-xs">
+            <span className="w-6 text-zinc-500">#{offset + i + 1}</span>
+            <span className="flex-1 text-zinc-300">{getTeamLabel(t)}</span>
+            <span className="font-mono text-amber-400">{formatTime(timeMap.get(t)!)}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-2">
-      <p className="text-xs text-zinc-500 mb-3">Assign a finishing rank to each team after they complete Popp Koppen.</p>
-      {activeTeams.map((teamNum) => {
-        const members = gamePlayers.filter((p) => p.team_number === teamNum);
-        const existing = gameRankings.find((r) => r.team_number === teamNum);
-        const rank = rankDraft[teamNum] ?? "";
-        const isSolo = members.length === 1;
+    <div className="space-y-5">
+      {/* R1 time entry */}
+      <div>
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Round 1 Times</p>
+        <div className="space-y-2">
+          {activeTeams.map((t) => (
+            <TimeRow key={t} teamNum={t} draft={r1Draft} setDraft={setR1Draft}
+              savedTime={r1Saved.get(t) ?? null} onSave={() => handleR1Save(t)} accent />
+          ))}
+        </div>
+        <StandingsBox teams={activeTeams} timeMap={r1Saved} offset={0} />
+      </div>
 
-        return (
-          <div key={teamNum} className="rounded-lg border border-zinc-800 px-4 py-3">
-            <div className="flex items-center justify-between mb-2.5">
-              <span className="text-xs font-semibold text-amber-500">
-                Team {teamNum}{isSolo ? " (solo)" : ""}
-              </span>
-              <span className="text-sm text-zinc-300">{members.map((m) => getName(m.contestant_id)).join(" + ")}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <select
-                value={rank}
-                onChange={(e) => setRankDraft((prev) => ({ ...prev, [teamNum]: e.target.value }))}
-                className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none touch-manipulation">
-                <option value="">— rank —</option>
-                {[1, 2, 3, 4, 5, 6].map((r) => <option key={r} value={r.toString()}>{ORDINALS[r]}</option>)}
-              </select>
-              <button
-                onClick={async () => {
-                  const r = parseInt(rank, 10);
-                  if (isNaN(r)) { toast.error("Pick a rank"); return; }
-                  const { error } = await upsertTeamRanking(game.id, teamNum, r, existing?.tiebreak_winner_id ?? null);
-                  if (error) { toast.error("Save failed"); return; }
-                  toast.success(`Team ${teamNum} → ${ORDINALS[r]}`);
-                  onMutate();
-                }}
-                className="rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-black hover:bg-amber-400 touch-manipulation"
-                style={{ WebkitTapHighlightColor: "transparent" }}>
-                Save
-              </button>
-            </div>
+      {/* Playoff section — only shown when all R1 times are saved */}
+      {allR1Done && (
+        <>
+          <div className="flex items-center gap-2">
+            <div className="h-px flex-1 bg-zinc-800" />
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Playoffs</span>
+            <div className="h-px flex-1 bg-zinc-800" />
           </div>
-        );
-      })}
+
+          <div>
+            <p className="mb-2 text-xs font-semibold text-amber-400">{ord(1)} – {ord(half)} Place Playoff</p>
+            <div className="space-y-2">
+              {topGroup.map((t) => (
+                <TimeRow key={t} teamNum={t} draft={playoffDraft} setDraft={setPlayoffDraft}
+                  savedTime={playoffSaved.get(t) ?? null} onSave={() => handlePlayoffSave(t)} accent />
+              ))}
+            </div>
+            <StandingsBox teams={topGroup} timeMap={playoffSaved} offset={0} />
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs font-semibold text-zinc-500">{ord(half + 1)} – {ord(n)} Place Playoff</p>
+            <div className="space-y-2">
+              {botGroup.map((t) => (
+                <TimeRow key={t} teamNum={t} draft={playoffDraft} setDraft={setPlayoffDraft}
+                  savedTime={playoffSaved.get(t) ?? null} onSave={() => handlePlayoffSave(t)} />
+              ))}
+            </div>
+            <StandingsBox teams={botGroup} timeMap={playoffSaved} offset={half} />
+          </div>
+        </>
+      )}
     </div>
   );
 }
