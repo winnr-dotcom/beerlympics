@@ -27,6 +27,8 @@ import {
   resetCrockGame,
   saveTeamR1Time,
   saveTeamPlayoffTime,
+  clearTeamR1Time,
+  clearTeamPlayoffTime,
   resetPoppKoppenGame,
 } from "@/lib/api";
 import {
@@ -875,9 +877,25 @@ function PoppKoppenRankings({ game, data, onMutate }: { game: BLGame; data: Fetc
     onMutate();
   }
 
-  function TimeRow({ teamNum, draft, setDraft, savedTime, onSave, accent }: {
+  async function handleR1Clear(teamNum: number) {
+    const { error } = await clearTeamR1Time(game.id, teamNum);
+    if (error) { toast.error("Remove failed"); return; }
+    setR1Draft((p) => ({ ...p, [teamNum]: "" }));
+    toast.success(`Team ${teamNum} R1 time removed`);
+    onMutate();
+  }
+
+  async function handlePlayoffClear(teamNum: number) {
+    const { error } = await clearTeamPlayoffTime(game.id, teamNum);
+    if (error) { toast.error("Remove failed"); return; }
+    setPlayoffDraft((p) => ({ ...p, [teamNum]: "" }));
+    toast.success(`Team ${teamNum} playoff time removed`);
+    onMutate();
+  }
+
+  function TimeRow({ teamNum, draft, setDraft, savedTime, onSave, onClear, accent }: {
     teamNum: number; draft: Record<number, string>; setDraft: React.Dispatch<React.SetStateAction<Record<number, string>>>;
-    savedTime: number | null; onSave: () => void; accent?: boolean;
+    savedTime: number | null; onSave: () => void; onClear?: () => void; accent?: boolean;
   }) {
     return (
       <div className="flex items-center gap-2 rounded-lg border border-zinc-800 px-3 py-2.5">
@@ -897,6 +915,14 @@ function PoppKoppenRankings({ game, data, onMutate }: { game: BLGame; data: Fetc
           style={{ WebkitTapHighlightColor: "transparent" }}>
           Save
         </button>
+        {savedTime != null && onClear && (
+          <button onClick={() => { if (confirm(`Remove Team ${teamNum}'s time?`)) onClear(); }}
+            title="Remove this time"
+            className="rounded-lg border border-zinc-700 px-2.5 py-2 text-sm text-zinc-500 hover:text-red-400 hover:border-red-900 touch-manipulation"
+            style={{ WebkitTapHighlightColor: "transparent" }}>
+            ×
+          </button>
+        )}
       </div>
     );
   }
@@ -925,7 +951,7 @@ function PoppKoppenRankings({ game, data, onMutate }: { game: BLGame; data: Fetc
         <div className="space-y-2">
           {activeTeams.map((t) => (
             <TimeRow key={t} teamNum={t} draft={r1Draft} setDraft={setR1Draft}
-              savedTime={r1Saved.get(t) ?? null} onSave={() => handleR1Save(t)} accent />
+              savedTime={r1Saved.get(t) ?? null} onSave={() => handleR1Save(t)} onClear={() => handleR1Clear(t)} accent />
           ))}
         </div>
         <StandingsBox teams={activeTeams} timeMap={r1Saved} offset={0} />
@@ -945,7 +971,7 @@ function PoppKoppenRankings({ game, data, onMutate }: { game: BLGame; data: Fetc
             <div className="space-y-2">
               {topGroup.map((t) => (
                 <TimeRow key={t} teamNum={t} draft={playoffDraft} setDraft={setPlayoffDraft}
-                  savedTime={playoffSaved.get(t) ?? null} onSave={() => handlePlayoffSave(t)} accent />
+                  savedTime={playoffSaved.get(t) ?? null} onSave={() => handlePlayoffSave(t)} onClear={() => handlePlayoffClear(t)} accent />
               ))}
             </div>
             <StandingsBox teams={topGroup} timeMap={playoffSaved} offset={0} />
@@ -956,7 +982,7 @@ function PoppKoppenRankings({ game, data, onMutate }: { game: BLGame; data: Fetc
             <div className="space-y-2">
               {botGroup.map((t) => (
                 <TimeRow key={t} teamNum={t} draft={playoffDraft} setDraft={setPlayoffDraft}
-                  savedTime={playoffSaved.get(t) ?? null} onSave={() => handlePlayoffSave(t)} />
+                  savedTime={playoffSaved.get(t) ?? null} onSave={() => handlePlayoffSave(t)} onClear={() => handlePlayoffClear(t)} />
               ))}
             </div>
             <StandingsBox teams={botGroup} timeMap={playoffSaved} offset={half} />

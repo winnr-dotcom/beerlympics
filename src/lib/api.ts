@@ -176,6 +176,20 @@ export async function saveTeamPlayoffTime(gameId: string, teamNumber: number, ti
   );
 }
 
+// Remove a single team's R1 time (sets it back to empty / unrecorded).
+export async function clearTeamR1Time(gameId: string, teamNumber: number) {
+  return supabase.from("team_game_rankings")
+    .update({ r1_time_seconds: null, updated_at: new Date().toISOString() })
+    .eq("game_id", gameId).eq("team_number", teamNumber);
+}
+
+// Remove a single team's playoff time.
+export async function clearTeamPlayoffTime(gameId: string, teamNumber: number) {
+  return supabase.from("team_game_rankings")
+    .update({ playoff_time_seconds: null, updated_at: new Date().toISOString() })
+    .eq("game_id", gameId).eq("team_number", teamNumber);
+}
+
 // ── Chessboard matches ────────────────────────────────────────
 
 export async function upsertChessboardMatch(
