@@ -316,6 +316,11 @@ export async function resetCrockGame(gameId: string) {
   await supabase.from("crock_finals").delete().eq("game_id", gameId);
 }
 
+export async function resetChessboardGame(gameId: string) {
+  await supabase.from("chessboard_matches").delete().eq("game_id", gameId);
+  await supabase.from("team_game_rankings").delete().eq("game_id", gameId);
+}
+
 // ── Bonus points ─────────────────────────────────────────────
 
 export async function addBonus(contestantId: string, points: number, reason: string) {

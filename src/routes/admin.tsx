@@ -17,6 +17,7 @@ import {
   upsertLivesState,
   resetLivesGame,
   resetRound2ForGame,
+  resetChessboardGame,
   upsertCrockGroup,
   saveCrockAssignments,
   saveCrockR2Assignments,
@@ -806,6 +807,13 @@ function ChessboardPanel({ game, data, onMutate }: { game: BLGame; data: FetchAl
   const gamePlayers = data.teamPlayers.filter((p) => p.game_id === game.id);
   const ranksMap = computeChessboardTeamRanks(game.id, data.chessboardMatches);
 
+  async function handleReset() {
+    if (!confirm("Reset all Chessboard match results and rankings? Team assignments will be kept.")) return;
+    await resetChessboardGame(game.id);
+    toast.success("Chessboard results cleared");
+    onMutate();
+  }
+
   return (
     <div>
       <div className="mb-4 flex gap-1.5">
@@ -815,6 +823,11 @@ function ChessboardPanel({ game, data, onMutate }: { game: BLGame; data: FetchAl
             {label}
           </button>
         ))}
+        <button onClick={handleReset}
+          className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-600 hover:text-red-400 touch-manipulation shrink-0"
+          style={{ WebkitTapHighlightColor: "transparent" }}>
+          Reset
+        </button>
       </div>
 
       {subTab === "teams" && <TeamsSetup game={game} data={data} onMutate={onMutate} />}
@@ -1006,6 +1019,14 @@ function LivesPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResu
     return c ? (c.nickname ?? c.full_name.split(" ")[0]) : "?";
   };
 
+  async function handleReset() {
+    if (!confirm("Reset lives game? All scores will be cleared from the leaderboard.")) return;
+    await resetLivesGame(game.id);
+    await resetRound2ForGame(game.id);
+    toast.success("Lives game reset — click Start to begin again");
+    onMutate();
+  }
+
   async function handleInit() {
     await resetLivesGame(game.id);
     await resetRound2ForGame(game.id);
@@ -1061,7 +1082,7 @@ function LivesPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResu
             🏆 Playoffs
           </button>
         )}
-        <button onClick={() => { if (confirm("Reset lives game?")) handleInit(); }}
+        <button onClick={handleReset}
           className="rounded-lg border border-zinc-700 px-3 py-2.5 text-xs text-zinc-600 hover:text-red-400 touch-manipulation shrink-0">
           Reset
         </button>
