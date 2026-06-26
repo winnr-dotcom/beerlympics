@@ -422,7 +422,14 @@ function GameProgressModal({ game, data, onClose }: { game: BLGame; data: FetchA
         onClick={(e) => e.stopPropagation()}
       >
         <div className="bg-zinc-900 border-b border-zinc-800 px-4 py-3 flex items-center justify-between shrink-0 rounded-t-2xl">
-          <h2 className="font-bold text-amber-400 text-base">{game.name}</h2>
+          <div className="flex items-center gap-2 min-w-0">
+            <h2 className="font-bold text-amber-400 text-base truncate">{game.name}</h2>
+            {gameStatus(game, data).live && (
+              <span className="flex items-center gap-1 rounded-full bg-red-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-white shrink-0">
+                <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" /> Live
+              </span>
+            )}
+          </div>
           <button onClick={onClose} className="text-zinc-400 hover:text-white h-8 w-8 flex items-center justify-center text-xl rounded-full hover:bg-zinc-800 shrink-0">×</button>
         </div>
         <div className="overflow-y-auto rounded-b-2xl">{content}</div>
@@ -431,9 +438,250 @@ function GameProgressModal({ game, data, onClose }: { game: BLGame; data: FetchA
   );
 }
 
+// Derive a game's status pill + whether it is currently being played ("live").
+function gameStatus(g: BLGame, data: FetchAllResult): { label: string; color: string; border: string; live: boolean } {
+  let label = "Upcoming";
+  let color = "text-zinc-600";
+  let border = "border-zinc-800";
+
+  if (g.game_type === "individual" || g.game_type === "individual_points") {
+    const r1c = data.round1.filter((r) => r.game_id === g.id).length;
+    const r2c = data.round2.filter((r) => r.game_id === g.id).length;
+    if (r2c >= 11) { label = "✓ Done"; color = "text-green-400"; border = "border-green-800"; }
+    else if (r2c > 0) { label = "Playoffs"; color = "text-amber-400"; border = "border-amber-800"; }
+    else if (r1c >= 11) { label = "R1 Done"; color = "text-blue-400"; border = "border-blue-800"; }
+    else if (r1c > 0) { label = `${r1c}/11`; color = "text-yellow-400"; border = "border-yellow-800"; }
+  } else if (g.game_type === "individual_race") {
+    const r1c = data.round1.filter((r) => r.game_id === g.id).length;
+    if (r1c >= 11) { label = "✓ Done"; color = "text-green-400"; border = "border-green-800"; }
+    else if (r1c > 0) { label = `${r1c}/11`; color = "text-yellow-400"; border = "border-yellow-800"; }
+  } else if (g.game_type === "lives_bracket") {
+    const lc = data.livesStates.filter((s) => s.game_id === g.id).length;
+    const elim = data.livesStates.filter((s) => s.game_id === g.id && s.eliminated_order !== null).length;
+    const r2c = data.round2.filter((r) => r.game_id === g.id).length;
+    if (r2c >= 6) { label = "✓ Done"; color = "text-green-400"; border = "border-green-800"; }
+    else if (r2c > 0) { label = "Playoffs"; color = "text-amber-400"; border = "border-amber-800"; }
+    else if (elim >= 5) { label = "Ready KO"; color = "text-blue-400"; border = "border-blue-800"; }
+    else if (lc > 0) { label = `${elim}/5 out`; color = "text-yellow-400"; border = "border-yellow-800"; }
+    else { label = "❤️ Lives"; }
+  } else if (g.game_type === "lives_no_playoff") {
+    const lc = data.livesStates.filter((s) => s.game_id === g.id).length;
+    const elim = data.livesStates.filter((s) => s.game_id === g.id && s.eliminated_order !== null).length;
+    if (elim >= 5) { label = "✓ Done"; color = "text-green-400"; border = "border-green-800"; }
+    else if (lc > 0) { label = `${elim}/5 out`; color = "text-yellow-400"; border = "border-yellow-800"; }
+    else { label = "❤️ Lives"; }
+  } else if (g.game_type === "cup_format") {
+    const gc = data.crockGroups.filter((g2) => g2.game_id === g.id).length;
+    const r2c = data.round2.filter((r) => r.game_id === g.id).length;
+    if (r2c >= 9) { label = "✓ Done"; color = "text-green-400"; border = "border-green-800"; }
+    else if (r2c > 0) { label = "Knockout"; color = "text-amber-400"; border = "border-amber-800"; }
+    else if (gc >= 11) { label = "Groups set"; color = "text-blue-400"; border = "border-blue-800"; }
+    else if (gc > 0) { label = `${gc}/11 set`; color = "text-yellow-400"; border = "border-yellow-800"; }
+    else { label = "🏆 Cup"; }
+  } else {
+    const tp = data.teamPlayers.filter((p) => p.game_id === g.id).length;
+    const tr = data.teamRankings.filter((r) => r.game_id === g.id && r.tiebreak_winner_id).length;
+    const matches = g.game_type === "team_chess"
+      ? data.chessboardMatches.filter((m) => m.game_id === g.id && m.winner_team !== null).length : 0;
+    if (tr === 5) { label = "✓ Done"; color = "text-green-400"; border = "border-green-800"; }
+    else if (g.game_type === "team_chess" && matches > 0) { label = `League ${matches}/10`; color = "text-amber-400"; border = "border-amber-800"; }
+    else if (g.game_type === "team_popp" && data.teamRankings.filter((r) => r.game_id === g.id && r.rank !== null).length > 0) {
+      label = "Results in"; color = "text-amber-400"; border = "border-amber-800";
+    } else if (tp > 0) { label = "Teams set"; color = "text-blue-400"; border = "border-blue-800"; }
+    else { label = g.game_type === "team_chess" ? "♟️ League" : "👥 Team"; }
+  }
+
+  // "Live" = the game has started but isn't finished yet.
+  const live = label !== "Upcoming" && !label.startsWith("✓");
+  return { label, color, border, live };
+}
+
+// ── Statistics tab ────────────────────────────────────────────
+
+function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-center">
+      <div className="text-2xl font-black tabular-nums text-amber-400 leading-none">{value}</div>
+      <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{label}</div>
+      {sub && <div className="mt-0.5 text-[10px] text-zinc-600">{sub}</div>}
+    </div>
+  );
+}
+
+function SuperlativeCard({ icon, title, names, detail }: { icon: string; title: string; names: string[]; detail: string }) {
+  return (
+    <div className="rounded-xl border border-zinc-800 p-3">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+        <span className="text-base">{icon}</span>{title}
+      </div>
+      <div className="mt-1.5 text-sm font-bold text-zinc-100 leading-tight">
+        {names.length ? names.join(", ") : "—"}
+      </div>
+      <div className="mt-0.5 text-xs text-zinc-500">{detail}</div>
+    </div>
+  );
+}
+
+function Statistics({ rows, data }: { rows: LeaderboardRow[]; data: FetchAllResult }) {
+  const getName = (id: string) => {
+    const c = data.contestants.find((x) => x.id === id);
+    return c ? (c.nickname ?? c.full_name.split(" ")[0]) : "?";
+  };
+
+  const stats = rows.map((row) => {
+    const results = Object.values(row.gameResults).filter((r) => r.points !== null);
+    const ranks = results.map((r) => r.rank).filter((x): x is number => x !== null);
+    return {
+      row,
+      golds: results.filter((r) => r.rank === 1).length,
+      silvers: results.filter((r) => r.rank === 2).length,
+      bronzes: results.filter((r) => r.rank === 3).length,
+      podiums: ranks.filter((r) => r <= 3).length,
+      played: results.length,
+      avgRank: ranks.length ? ranks.reduce((a, b) => a + b, 0) / ranks.length : null,
+      bestGamePts: results.length ? Math.max(...results.map((r) => r.points!)) : 0,
+      bonus: row.bonusTotal,
+    };
+  });
+
+  // Overview tiles
+  const totalGames = data.games.length;
+  const gamesDone = data.games.filter((g) => gameStatus(g, data).label.startsWith("✓")).length;
+  const gamesLive = data.games.filter((g) => gameStatus(g, data).live).length;
+  const totalPoints = rows.reduce((a, r) => a + r.total, 0);
+
+  // Leader helper: returns names of contestants tying for the max of `sel`
+  const leadersBy = (sel: (s: typeof stats[number]) => number, min = 1) => {
+    const top = Math.max(0, ...stats.map(sel));
+    if (top < min) return { names: [] as string[], value: top };
+    return { names: stats.filter((s) => sel(s) === top).map((s) => getName(s.row.contestant.id)), value: top };
+  };
+
+  const golds = leadersBy((s) => s.golds);
+  const podiums = leadersBy((s) => s.podiums);
+  const bonus = leadersBy((s) => s.bonus);
+
+  // Most consistent = lowest average finishing position (min 3 games played)
+  const eligible = stats.filter((s) => s.played >= 3 && s.avgRank !== null);
+  const bestAvg = eligible.length ? Math.min(...eligible.map((s) => s.avgRank!)) : null;
+  const consistent = {
+    names: bestAvg !== null ? eligible.filter((s) => s.avgRank === bestAvg).map((s) => getName(s.row.contestant.id)) : [],
+    value: bestAvg,
+  };
+
+  // Best single-game performance (highest points scored in one game)
+  let best: { name: string; game: string; pts: number } | null = null;
+  for (const row of rows) {
+    for (const [gid, r] of Object.entries(row.gameResults)) {
+      if (r.points === null || r.isProvisional) continue;
+      if (!best || r.points > best.pts) {
+        const g = data.games.find((x) => x.id === gid);
+        best = { name: getName(row.contestant.id), game: g?.name ?? "?", pts: r.points };
+      }
+    }
+  }
+
+  // Medal table — sorted by golds, then silvers, then bronzes
+  const medalTable = [...stats]
+    .filter((s) => s.golds + s.silvers + s.bronzes > 0)
+    .sort((a, b) => b.golds - a.golds || b.silvers - a.silvers || b.bronzes - a.bronzes);
+
+  // Fastest-time records for time-based games
+  const timeGames = data.games.filter((g) => g.game_type === "individual" || g.game_type === "individual_race");
+  const records = timeGames.map((g) => {
+    const times = [...data.round1, ...data.round2].filter((r) => r.game_id === g.id);
+    if (times.length === 0) return { game: g, holder: null as string | null, time: null as number | null };
+    const best = times.reduce((m, r) => (r.time_seconds < m.time_seconds ? r : m));
+    return { game: g, holder: getName(best.contestant_id), time: best.time_seconds };
+  }).filter((r) => r.time !== null);
+
+  const hasData = rows.some((r) => r.total !== 0) || stats.some((s) => s.played > 0);
+  if (!hasData) {
+    return (
+      <div className="py-20 text-center text-zinc-600">
+        <div className="text-4xl mb-3">📊</div>
+        <p>No stats yet — they'll appear as games are played.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      {/* Overview */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <StatTile label="Players" value={String(rows.length)} />
+        <StatTile label="Games Done" value={`${gamesDone}/${totalGames}`} sub={gamesLive > 0 ? `${gamesLive} live now` : undefined} />
+        <StatTile label="Points Awarded" value={String(totalPoints)} />
+        <StatTile label="Leader" value={rows[0] ? String(rows[0].total) : "0"} sub={rows[0] ? getName(rows[0].contestant.id) : undefined} />
+      </div>
+
+      {/* Superlatives */}
+      <div>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-500">Superlatives</h2>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <SuperlativeCard icon="🥇" title="Most Golds" names={golds.names} detail={`${golds.value} game ${golds.value === 1 ? "win" : "wins"}`} />
+          <SuperlativeCard icon="🏅" title="Most Podiums" names={podiums.names} detail={`${podiums.value} top-3 ${podiums.value === 1 ? "finish" : "finishes"}`} />
+          <SuperlativeCard icon="📊" title="Most Consistent" names={consistent.names} detail={consistent.value !== null ? `${consistent.value.toFixed(1)} avg finish` : "Min. 3 games"} />
+          <SuperlativeCard icon="💥" title="Best Single Game" names={best ? [best.name] : []} detail={best ? `${best.pts} pts · ${best.game}` : "—"} />
+          <SuperlativeCard icon="🎁" title="Bonus King" names={bonus.value > 0 ? bonus.names : []} detail={bonus.value > 0 ? `+${bonus.value} bonus pts` : "No bonus yet"} />
+          <SuperlativeCard icon="🍺" title="Tightest Race" names={rows.length >= 2 ? [`${getName(rows[0].contestant.id)} vs ${getName(rows[1].contestant.id)}`] : []} detail={rows.length >= 2 ? `${rows[0].total - rows[1].total} pt gap at the top` : "—"} />
+        </div>
+      </div>
+
+      {/* Medal table */}
+      {medalTable.length > 0 && (
+        <div>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-500">Medal Table</h2>
+          <div className="overflow-hidden rounded-xl border border-zinc-800">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-800 bg-zinc-900 text-zinc-500">
+                  <th className="px-3 py-2.5 text-left font-semibold">Player</th>
+                  <th className="px-2 py-2.5 text-center w-12">🥇</th>
+                  <th className="px-2 py-2.5 text-center w-12">🥈</th>
+                  <th className="px-2 py-2.5 text-center w-12">🥉</th>
+                </tr>
+              </thead>
+              <tbody>
+                {medalTable.map((s, i) => (
+                  <tr key={s.row.contestant.id} className={`border-b border-zinc-800/40 ${i === 0 ? "bg-amber-950/20" : ""}`}>
+                    <td className="px-3 py-2.5 text-zinc-200">{getName(s.row.contestant.id)}</td>
+                    <td className="px-2 py-2.5 text-center font-bold tabular-nums text-amber-400">{s.golds || "–"}</td>
+                    <td className="px-2 py-2.5 text-center tabular-nums text-zinc-300">{s.silvers || "–"}</td>
+                    <td className="px-2 py-2.5 text-center tabular-nums text-zinc-400">{s.bronzes || "–"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Time records */}
+      {records.length > 0 && (
+        <div>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-500">Fastest Times</h2>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {records.map((r) => (
+              <div key={r.game.id} className="flex items-center justify-between rounded-xl border border-zinc-800 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-zinc-200 truncate">{r.game.name}</div>
+                  <div className="text-xs text-zinc-500">{r.holder}</div>
+                </div>
+                <div className="font-mono text-sm font-bold text-amber-400 shrink-0">{formatTime(r.time!)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LeaderboardPage() {
   const { user } = useAuth();
   const [selectedGame, setSelectedGame] = useState<BLGame | null>(null);
+  const [tab, setTab] = useState<"leaderboard" | "stats">("leaderboard");
   const { data, isLoading, error } = useQuery({
     queryKey: ["beerlympics"],
     queryFn: fetchAll,
@@ -492,11 +740,24 @@ function LeaderboardPage() {
       </header>
 
       <main className="mx-auto max-w-7xl px-2 pb-12 pt-6">
-        <div className="mb-6 text-center">
-          <h1 className="text-4xl font-black tracking-tight text-amber-400">LEADERBOARD</h1>
-          {hasAnyResult && (
+        <div className="mb-5 text-center">
+          <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-amber-400">
+            {tab === "leaderboard" ? "LEADERBOARD" : "STATISTICS"}
+          </h1>
+          {hasAnyResult && tab === "leaderboard" && (
             <p className="mt-1 text-xs text-zinc-600">Live · auto-refreshes every 15s · P = provisional</p>
           )}
+        </div>
+
+        {/* Tab switcher */}
+        <div className="mx-auto mb-6 flex max-w-xs gap-1 rounded-full border border-zinc-800 bg-zinc-900/60 p-1">
+          {([["leaderboard", "🏆 Leaderboard"], ["stats", "📊 Statistics"]] as const).map(([key, label]) => (
+            <button key={key} onClick={() => setTab(key)}
+              className={`flex-1 rounded-full px-4 py-2 text-xs font-semibold transition-colors touch-manipulation ${tab === key ? "bg-amber-500 text-black" : "text-zinc-400 hover:text-zinc-200"}`}
+              style={{ WebkitTapHighlightColor: "transparent" }}>
+              {label}
+            </button>
+          ))}
         </div>
 
         {isLoading && (
@@ -512,15 +773,18 @@ function LeaderboardPage() {
           </div>
         )}
 
-        {data && rows.length === 0 && (
+        {data && rows.length === 0 && tab === "leaderboard" && (
           <div className="py-24 text-center text-zinc-600">
             <div className="text-4xl mb-3">🏆</div>
             <p>Leaderboard is empty. Run the database migration to get started.</p>
           </div>
         )}
 
-        {data && rows.length > 0 && (
+        {data && tab === "stats" && <Statistics rows={rows} data={data} />}
+
+        {data && rows.length > 0 && tab === "leaderboard" && (
           <>
+            <p className="mb-2 text-center text-[10px] text-zinc-600 sm:hidden">← swipe to see all games · tap a game header for live standings →</p>
             <div className="overflow-x-auto rounded-xl border border-zinc-800">
               <table className="w-full text-sm" style={{ minWidth: "max-content" }}>
                 <thead>
@@ -535,7 +799,7 @@ function LeaderboardPage() {
                       </th>
                     ))}
                     <th className="px-2 py-3.5 text-center text-xs font-semibold text-zinc-400">+/−</th>
-                    <th className="px-3 py-3.5 text-center text-xs font-black text-amber-400 min-w-[52px]">TOT</th>
+                    <th className="sticky right-0 z-20 bg-zinc-900 px-3 py-3.5 text-center text-xs font-black text-amber-400 min-w-[52px] border-l border-zinc-800/50">TOT</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -575,7 +839,7 @@ function LeaderboardPage() {
                             {row.bonusTotal > 0 ? `+${row.bonusTotal}` : row.bonusTotal < 0 ? row.bonusTotal : "–"}
                           </span>
                         </td>
-                        <td className="px-3 py-3 text-center">
+                        <td className={`sticky right-0 z-10 ${stickyBg} px-3 py-3 text-center border-l border-zinc-800/30`}>
                           <span className="text-base font-black text-amber-400 tabular-nums">{row.total}</span>
                         </td>
                       </tr>
@@ -587,62 +851,21 @@ function LeaderboardPage() {
 
             {/* Game status cards */}
             <div className="mt-8">
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-500">Games</h2>
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-500">Games</h2>
+                <span className="text-[11px] text-zinc-600">Tap a game for live standings</span>
+              </div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
                 {data.games.map((g) => {
-                  let statusLabel = "Upcoming";
-                  let statusColor = "text-zinc-600";
-                  let borderColor = "border-zinc-800";
-
-                  if (g.game_type === "individual" || g.game_type === "individual_points") {
-                    const r1c = data.round1.filter((r) => r.game_id === g.id).length;
-                    const r2c = data.round2.filter((r) => r.game_id === g.id).length;
-                    if (r2c >= 11) { statusLabel = "✓ Done"; statusColor = "text-green-400"; borderColor = "border-green-800"; }
-                    else if (r2c > 0) { statusLabel = "Playoffs"; statusColor = "text-amber-400"; borderColor = "border-amber-800"; }
-                    else if (r1c >= 11) { statusLabel = "R1 Done"; statusColor = "text-blue-400"; borderColor = "border-blue-800"; }
-                    else if (r1c > 0) { statusLabel = `${r1c}/11`; statusColor = "text-yellow-400"; borderColor = "border-yellow-800"; }
-                  } else if (g.game_type === "individual_race") {
-                    const r1c = data.round1.filter((r) => r.game_id === g.id).length;
-                    if (r1c >= 11) { statusLabel = "✓ Done"; statusColor = "text-green-400"; borderColor = "border-green-800"; }
-                    else if (r1c > 0) { statusLabel = `${r1c}/11`; statusColor = "text-yellow-400"; borderColor = "border-yellow-800"; }
-                  } else if (g.game_type === "lives_bracket") {
-                    const lc = data.livesStates.filter((s) => s.game_id === g.id).length;
-                    const elim = data.livesStates.filter((s) => s.game_id === g.id && s.eliminated_order !== null).length;
-                    const r2c = data.round2.filter((r) => r.game_id === g.id).length;
-                    if (r2c >= 6) { statusLabel = "✓ Done"; statusColor = "text-green-400"; borderColor = "border-green-800"; }
-                    else if (r2c > 0) { statusLabel = "Playoffs"; statusColor = "text-amber-400"; borderColor = "border-amber-800"; }
-                    else if (elim >= 5) { statusLabel = "Ready KO"; statusColor = "text-blue-400"; borderColor = "border-blue-800"; }
-                    else if (lc > 0) { statusLabel = `${elim}/5 out`; statusColor = "text-yellow-400"; borderColor = "border-yellow-800"; }
-                    else { statusLabel = "❤️ Lives"; }
-                  } else if (g.game_type === "lives_no_playoff") {
-                    const lc = data.livesStates.filter((s) => s.game_id === g.id).length;
-                    const elim = data.livesStates.filter((s) => s.game_id === g.id && s.eliminated_order !== null).length;
-                    if (elim >= 5) { statusLabel = "✓ Done"; statusColor = "text-green-400"; borderColor = "border-green-800"; }
-                    else if (lc > 0) { statusLabel = `${elim}/5 out`; statusColor = "text-yellow-400"; borderColor = "border-yellow-800"; }
-                    else { statusLabel = "❤️ Lives"; }
-                  } else if (g.game_type === "cup_format") {
-                    const gc = data.crockGroups.filter((g2) => g2.game_id === g.id).length;
-                    const r2c = data.round2.filter((r) => r.game_id === g.id).length;
-                    if (r2c >= 9) { statusLabel = "✓ Done"; statusColor = "text-green-400"; borderColor = "border-green-800"; }
-                    else if (r2c > 0) { statusLabel = "Knockout"; statusColor = "text-amber-400"; borderColor = "border-amber-800"; }
-                    else if (gc >= 11) { statusLabel = "Groups set"; statusColor = "text-blue-400"; borderColor = "border-blue-800"; }
-                    else if (gc > 0) { statusLabel = `${gc}/11 set`; statusColor = "text-yellow-400"; borderColor = "border-yellow-800"; }
-                    else { statusLabel = "🏆 Cup"; }
-                  } else {
-                    const tp = data.teamPlayers.filter((p) => p.game_id === g.id).length;
-                    const tr = data.teamRankings.filter((r) => r.game_id === g.id && r.tiebreak_winner_id).length;
-                    const matches = g.game_type === "team_chess"
-                      ? data.chessboardMatches.filter((m) => m.game_id === g.id && m.winner_team !== null).length : 0;
-                    if (tr === 5) { statusLabel = "✓ Done"; statusColor = "text-green-400"; borderColor = "border-green-800"; }
-                    else if (g.game_type === "team_chess" && matches > 0) { statusLabel = `League ${matches}/10`; statusColor = "text-amber-400"; borderColor = "border-amber-800"; }
-                    else if (g.game_type === "team_popp" && data.teamRankings.filter((r) => r.game_id === g.id && r.rank !== null).length > 0) {
-                      statusLabel = "Results in"; statusColor = "text-amber-400"; borderColor = "border-amber-800";
-                    } else if (tp > 0) { statusLabel = "Teams set"; statusColor = "text-blue-400"; borderColor = "border-blue-800"; }
-                    else { statusLabel = g.game_type === "team_chess" ? "♟️ League" : "👥 Team"; }
-                  }
+                  const { label: statusLabel, color: statusColor, border: borderColor, live } = gameStatus(g, data);
 
                   return (
-                    <button key={g.id} onClick={() => setSelectedGame(g)} className={`rounded-lg border px-3 py-2 text-center w-full transition-colors hover:border-zinc-600 hover:bg-zinc-900/60 active:bg-zinc-800/60 ${borderColor}`}>
+                    <button key={g.id} onClick={() => setSelectedGame(g)} className={`relative rounded-lg border px-3 py-2 text-center w-full transition-colors hover:border-zinc-600 hover:bg-zinc-900/60 active:bg-zinc-800/60 ${live ? "border-amber-700/70 bg-amber-950/10" : borderColor}`}>
+                      {live && (
+                        <span className="absolute -top-1.5 -right-1.5 flex items-center gap-0.5 rounded-full bg-red-600 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide text-white shadow">
+                          <span className="h-1 w-1 rounded-full bg-white animate-pulse" /> Live
+                        </span>
+                      )}
                       <div className="text-xs font-semibold text-zinc-300 truncate">{g.name}</div>
                       <div className={`mt-0.5 text-[10px] ${statusColor}`}>{statusLabel}</div>
                     </button>

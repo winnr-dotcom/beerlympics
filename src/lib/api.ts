@@ -354,6 +354,11 @@ export async function resetChessboardGame(gameId: string) {
   await supabase.from("team_game_rankings").delete().eq("game_id", gameId);
 }
 
+// Clears Popp Koppen results (R1 / playoff times, ranks, tiebreaks). Team assignments are kept.
+export async function resetPoppKoppenGame(gameId: string) {
+  return supabase.from("team_game_rankings").delete().eq("game_id", gameId);
+}
+
 // ── Bonus points ─────────────────────────────────────────────
 
 export async function addBonus(contestantId: string, points: number, reason: string) {

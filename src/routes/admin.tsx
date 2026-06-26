@@ -27,6 +27,7 @@ import {
   resetCrockGame,
   saveTeamR1Time,
   saveTeamPlayoffTime,
+  resetPoppKoppenGame,
 } from "@/lib/api";
 import {
   parseTime,
@@ -259,7 +260,8 @@ function IndividualTimesPanel({ game, data, onMutate }: { game: BLGame; data: Fe
           {data.contestants.map((c) => {
             const saved = r1ForGame.find((r) => r.contestant_id === c.id)?.time_seconds ?? null;
             const cur = r1Drafts[c.id] ?? "";
-            const bracket = allR1Done ? (bracketA.includes(c.id) ? "A" : "B") : null;
+            // Show the bracket each contestant currently falls into, live as times are entered.
+            const bracket = saved !== null ? (bracketA.includes(c.id) ? "A" : "B") : null;
             const name = c.nickname ?? c.full_name.split(" ")[0];
             return (
               <div key={c.id} className="flex items-center gap-2 px-4 py-2.5 hover:bg-zinc-800/20">
@@ -285,13 +287,18 @@ function IndividualTimesPanel({ game, data, onMutate }: { game: BLGame; data: Fe
 
       {!isRace && (
         <div className="rounded-xl border border-zinc-800 overflow-hidden">
-          <div className="bg-zinc-900/70 px-4 py-3 border-b border-zinc-800">
-            <h3 className="font-semibold text-zinc-200">Round 2 — Playoffs</h3>
-            <p className="text-xs text-zinc-500 mt-0.5">Bracket A → positions 1–6 · Bracket B → positions 7–{data.contestants.length}</p>
+          <div className="bg-zinc-900/70 px-4 py-3 border-b border-zinc-800 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="font-semibold text-zinc-200">Round 2 — Playoffs</h3>
+              <p className="text-xs text-zinc-500 mt-0.5">Bracket A → positions 1–6 · Bracket B → positions 7–{data.contestants.length}</p>
+            </div>
+            <span className={`text-[10px] font-bold uppercase tracking-wide shrink-0 px-2 py-1 rounded-full ${allR1Done ? "bg-green-950 text-green-400" : "bg-amber-950 text-amber-400"}`}>
+              {allR1Done ? "✓ Locked" : "● Provisional"}
+            </span>
           </div>
-          {!allR1Done ? (
+          {bracketA.length === 0 ? (
             <p className="text-xs text-zinc-600 text-center py-6">
-              Enter all {data.contestants.length} Round 1 times to unlock playoff brackets
+              Enter Round 1 times to preview the playoff brackets
             </p>
           ) : (
             <div className="p-4 grid gap-4 sm:grid-cols-2">
@@ -761,6 +768,13 @@ function PoppKoppenPanel({ game, data, onMutate }: { game: BLGame; data: FetchAl
   const activeTeams = [1, 2, 3, 4, 5, 6].filter((t) => gamePlayers.some((p) => p.team_number === t));
   const half = Math.ceil(activeTeams.length / 2);
 
+  async function handleReset() {
+    if (!confirm("Reset all Popp Koppen times and rankings? Team assignments will be kept.")) return;
+    await resetPoppKoppenGame(game.id);
+    toast.success("Popp Koppen results cleared");
+    onMutate();
+  }
+
   // Compute team ranks from times (not stored rank column)
   const r1Map = new Map<number, number>(
     gameRankings.filter((r) => r.r1_time_seconds != null).map((r) => [r.team_number, r.r1_time_seconds!]),
@@ -784,13 +798,18 @@ function PoppKoppenPanel({ game, data, onMutate }: { game: BLGame; data: FetchAl
 
   return (
     <div>
-      <div className="mb-4 flex gap-1.5">
+      <div className="mb-4 flex items-center gap-1.5">
         {([["teams", "👥 Teams"], ["rankings", "🏆 Rankings"], ["tiebreakers", "⚡ Tiebreakers"]] as const).map(([key, label]) => (
           <button key={key} onClick={() => setSubTab(key)}
             className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${subTab === key ? "bg-zinc-200 text-zinc-900" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}`}>
             {label}
           </button>
         ))}
+        <button onClick={handleReset}
+          className="ml-auto rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-500 hover:text-red-400 hover:border-red-900 transition-colors touch-manipulation"
+          style={{ WebkitTapHighlightColor: "transparent" }}>
+          Reset
+        </button>
       </div>
 
       {subTab === "teams" && <TeamsSetup game={game} data={data} onMutate={onMutate} />}
