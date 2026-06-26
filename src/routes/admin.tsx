@@ -14,16 +14,21 @@ import {
   saveTeamAssignments,
   upsertTeamRanking,
   upsertChessboardMatch,
+  upsertLivesState,
+  resetLivesGame,
+  upsertCrockGroup,
+  saveCrockAssignments,
 } from "@/lib/api";
 import {
   parseTime,
   formatTime,
   getBrackets,
+  getLivesBrackets,
   computeLeaderboard,
   computeChessboardTeamRanks,
   CHESS_PAIRS,
 } from "@/lib/scoring";
-import type { Contestant, BLGame, BonusPoint, TeamGamePlayer } from "@/lib/types";
+import type { Contestant, BLGame, BonusPoint, TeamGamePlayer, LivesGameState } from "@/lib/types";
 
 const ADMIN_PASSWORD = "beerlympics2024";
 
@@ -150,8 +155,14 @@ function TimesTab({ data, onMutate }: { data: FetchAllResult; onMutate: () => vo
         )}
       </div>
 
-      {game?.game_type === "individual" && (
-        <IndividualTimesPanel game={game} data={data} onMutate={onMutate} />
+      {(game?.game_type === "individual" || game?.game_type === "individual_points") && (
+        <IndividualTimesPanel game={game} data={data} onMutate={onMutate} isPoints={game.game_type === "individual_points"} />
+      )}
+      {game?.game_type === "lives_bracket" && (
+        <LivesPanel game={game} data={data} onMutate={onMutate} />
+      )}
+      {game?.game_type === "cup_format" && (
+        <CupFormatPanel game={game} data={data} onMutate={onMutate} />
       )}
       {game?.game_type === "team_popp" && (
         <PoppKoppenPanel game={game} data={data} onMutate={onMutate} />
@@ -167,7 +178,7 @@ function TimesTab({ data, onMutate }: { data: FetchAllResult; onMutate: () => vo
 // Individual game time entry
 // ──────────────────────────────────────────────────────────────
 
-function IndividualTimesPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
+function IndividualTimesPanel({ game, data, onMutate, isPoints = false }: { game: BLGame; data: FetchAllResult; onMutate: () => void; isPoints?: boolean }) {
   const r1ForGame = data.round1.filter((r) => r.game_id === game.id);
   const r2ForGame = data.round2.filter((r) => r.game_id === game.id);
   const { bracketA, bracketB } = getBrackets(game.id, data.round1);
@@ -177,14 +188,19 @@ function IndividualTimesPanel({ game, data, onMutate }: { game: BLGame; data: Fe
     <>
       <div className="mb-5 rounded-xl border border-zinc-800 overflow-hidden">
         <div className="bg-zinc-900/70 px-4 py-3 border-b border-zinc-800">
-          <h3 className="font-semibold text-zinc-200">Round 1 — All contestants</h3>
-          <p className="text-xs text-zinc-500 mt-0.5">Seconds (e.g. 45.32) or mm:ss (e.g. 1:23.45)</p>
+          <h3 className="font-semibold text-zinc-200">
+            {isPoints ? "Points — All contestants" : "Round 1 — All contestants"}
+          </h3>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            {isPoints ? "Enter points scored (e.g. 7)" : "Seconds (e.g. 45.32) or mm:ss (e.g. 1:23.45)"}
+          </p>
         </div>
         <div className="divide-y divide-zinc-800/50">
           {data.contestants.map((c) => (
             <TimeRow key={c.id} contestant={c} gameId={game.id} round="r1"
               existing={r1ForGame.find((r) => r.contestant_id === c.id)?.time_seconds ?? null}
               bracket={hasBrackets ? (bracketA.includes(c.id) ? "A" : "B") : null}
+              isPoints={isPoints}
               onSave={async (secs) => {
                 const { error } = await upsertRound1(c.id, game.id, secs);
                 if (error) { toast.error("Save failed"); return; }
@@ -215,6 +231,7 @@ function IndividualTimesPanel({ game, data, onMutate }: { game: BLGame; data: Fe
                       <TimeRow key={cid} contestant={c} gameId={game.id} round="r2"
                         existing={r2ForGame.find((r) => r.contestant_id === cid)?.time_seconds ?? null}
                         bracket={ids === bracketA ? "A" : "B"}
+                        isPoints={isPoints}
                         onSave={async (secs) => {
                           const { error } = await upsertRound2(c.id, game.id, secs);
                           if (error) { toast.error("Save failed"); return; }
@@ -241,16 +258,25 @@ function IndividualTimesPanel({ game, data, onMutate }: { game: BLGame; data: Fe
   );
 }
 
-function TimeRow({ contestant, gameId, round, existing, bracket, onSave, onDelete }: {
+function TimeRow({ contestant, gameId, round, existing, bracket, isPoints = false, onSave, onDelete }: {
   contestant: Contestant; gameId: string; round: "r1" | "r2"; existing: number | null;
-  bracket: "A" | "B" | null; onSave: (s: number) => Promise<void>; onDelete: () => Promise<void>;
+  bracket: "A" | "B" | null; isPoints?: boolean; onSave: (s: number) => Promise<void>; onDelete: () => Promise<void>;
 }) {
-  const [val, setVal] = useState(existing !== null ? formatTime(existing) : "");
+  const displayVal = (v: number) => isPoints ? v.toString() : formatTime(v);
+  const [val, setVal] = useState(existing !== null ? displayVal(existing) : "");
   const [saving, setSaving] = useState(false);
   const name = contestant.nickname ?? contestant.full_name.split(" ")[0];
-  const isDirty = val !== (existing !== null ? formatTime(existing) : "");
+  const isDirty = val !== (existing !== null ? displayVal(existing) : "");
 
   async function handleSave() {
+    if (isPoints) {
+      const pts = parseFloat(val.trim());
+      if (isNaN(pts) || pts < 0) { toast.error("Enter a valid score"); return; }
+      setSaving(true);
+      await onSave(pts);
+      setSaving(false);
+      return;
+    }
     const secs = parseTime(val);
     if (!secs || secs <= 0) { toast.error("Invalid time"); return; }
     setSaving(true);
@@ -265,7 +291,7 @@ function TimeRow({ contestant, gameId, round, existing, bracket, onSave, onDelet
       )}
       <span className="w-24 text-sm text-zinc-300 truncate shrink-0">{name}</span>
       <input value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
-        placeholder="e.g. 45.32" inputMode="decimal"
+        placeholder={isPoints ? "e.g. 7" : "e.g. 45.32"} inputMode="decimal"
         className="flex-1 min-w-0 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white placeholder-zinc-600 focus:border-amber-500 focus:outline-none tabular-nums" />
       {isDirty && val && (
         <button onClick={handleSave} disabled={saving}
@@ -666,12 +692,20 @@ function ChessboardLeague({ game, data, onMutate }: { game: BLGame; data: FetchA
     return c ? (c.nickname ?? c.full_name.split(" ")[0]) : "?";
   };
 
-  // League standings
+  // League standings with points + goal diff
   const ranksMap = computeChessboardTeamRanks(game.id, data.chessboardMatches);
-  const wins = new Map([1, 2, 3, 4, 5].map((t) => [t, 0]));
+  const pts = new Map([1, 2, 3, 4, 5].map((t) => [t, 0]));
+  const gf  = new Map([1, 2, 3, 4, 5].map((t) => [t, 0]));
+  const ga  = new Map([1, 2, 3, 4, 5].map((t) => [t, 0]));
   for (const m of matches.filter((m) => m.winner_team !== null)) {
-    if (m.winner_team === 1) wins.set(m.team_a, (wins.get(m.team_a) ?? 0) + 1);
-    if (m.winner_team === 2) wins.set(m.team_b, (wins.get(m.team_b) ?? 0) + 1);
+    const sa = m.score_a ?? 0, sb = m.score_b ?? 0;
+    gf.set(m.team_a, (gf.get(m.team_a) ?? 0) + sa);
+    ga.set(m.team_a, (ga.get(m.team_a) ?? 0) + sb);
+    gf.set(m.team_b, (gf.get(m.team_b) ?? 0) + sb);
+    ga.set(m.team_b, (ga.get(m.team_b) ?? 0) + sa);
+    if (m.winner_team === 1) pts.set(m.team_a, (pts.get(m.team_a) ?? 0) + 3);
+    else if (m.winner_team === 2) pts.set(m.team_b, (pts.get(m.team_b) ?? 0) + 3);
+    else if (m.winner_team === 0) { pts.set(m.team_a, (pts.get(m.team_a) ?? 0) + 1); pts.set(m.team_b, (pts.get(m.team_b) ?? 0) + 1); }
   }
   const played = matches.filter((m) => m.winner_team !== null).length;
 
@@ -681,26 +715,29 @@ function ChessboardLeague({ game, data, onMutate }: { game: BLGame; data: FetchA
       {played > 0 && (
         <div className="mb-5 rounded-xl border border-zinc-800 overflow-hidden">
           <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800">
-            <span className="text-xs font-semibold text-zinc-300">League standings ({played}/10 matches played)</span>
+            <span className="text-xs font-semibold text-zinc-300">League standings ({played}/10 played)</span>
           </div>
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-zinc-800 text-zinc-500">
-                <th className="px-4 py-2 text-left">Rank</th>
-                <th className="px-4 py-2 text-left">Team</th>
-                <th className="px-4 py-2 text-center">Wins</th>
+                <th className="px-3 py-2 text-left">#</th>
+                <th className="px-3 py-2 text-left">Team</th>
+                <th className="px-3 py-2 text-center">Pts</th>
+                <th className="px-3 py-2 text-center">GD</th>
               </tr>
             </thead>
             <tbody>
               {[...ranksMap.entries()].sort((a, b) => a[1] - b[1]).map(([team, rank]) => {
                 const members = getTeamMembers(team);
+                const gd = (gf.get(team) ?? 0) - (ga.get(team) ?? 0);
                 return (
                   <tr key={team} className="border-b border-zinc-800/40">
-                    <td className="px-4 py-2 font-bold text-amber-400">{rank}</td>
-                    <td className="px-4 py-2 text-zinc-300">
-                      Team {team}: {members.map((m) => getName(m.contestant_id)).join(" + ")}
+                    <td className="px-3 py-2 font-bold text-amber-400">{rank}</td>
+                    <td className="px-3 py-2 text-zinc-300 text-xs">
+                      T{team}: {members.map((m) => getName(m.contestant_id)).join("+")}
                     </td>
-                    <td className="px-4 py-2 text-center text-zinc-300">{wins.get(team) ?? 0}</td>
+                    <td className="px-3 py-2 text-center font-bold text-zinc-200">{pts.get(team) ?? 0}</td>
+                    <td className={`px-3 py-2 text-center ${gd > 0 ? "text-green-400" : gd < 0 ? "text-red-400" : "text-zinc-500"}`}>{gd > 0 ? `+${gd}` : gd}</td>
                   </tr>
                 );
               })}
@@ -722,8 +759,8 @@ function ChessboardLeague({ game, data, onMutate }: { game: BLGame; data: FetchA
               aMembers={aMembers} bMembers={bMembers}
               existing={existing ?? null}
               getName={getName}
-              onSave={async (playerAId, playerBId, winnerTeam) => {
-                const { error } = await upsertChessboardMatch(game.id, ta, tb, playerAId, playerBId, winnerTeam);
+              onSave={async (playerAId, playerBId, scoreA, scoreB) => {
+                const { error } = await upsertChessboardMatch(game.id, ta, tb, playerAId, playerBId, scoreA, scoreB);
                 if (error) { toast.error("Save failed"); return; }
                 toast.success(`Team ${ta} vs Team ${tb} — result saved`);
                 onMutate();
@@ -739,64 +776,398 @@ function ChessboardLeague({ game, data, onMutate }: { game: BLGame; data: FetchA
 function ChessMatchRow({ gameId, teamA, teamB, aMembers, bMembers, existing, getName, onSave }: {
   gameId: string; teamA: number; teamB: number;
   aMembers: TeamGamePlayer[]; bMembers: TeamGamePlayer[];
-  existing: { player_a_id: string | null; player_b_id: string | null; winner_team: number | null } | null;
+  existing: { player_a_id: string | null; player_b_id: string | null; winner_team: number | null; score_a: number | null; score_b: number | null } | null;
   getName: (id: string) => string;
-  onSave: (pa: string | null, pb: string | null, wt: number | null) => Promise<void>;
+  onSave: (pa: string | null, pb: string | null, sa: number | null, sb: number | null) => Promise<void>;
 }) {
   const [playerA, setPlayerA] = useState<string>(existing?.player_a_id ?? aMembers[0]?.contestant_id ?? "");
   const [playerB, setPlayerB] = useState<string>(existing?.player_b_id ?? bMembers[0]?.contestant_id ?? "");
-  const [winner, setWinner] = useState<number | null>(existing?.winner_team ?? null);
+  const [scoreA, setScoreA] = useState<string>(existing?.score_a?.toString() ?? "");
+  const [scoreB, setScoreB] = useState<string>(existing?.score_b?.toString() ?? "");
   const [saving, setSaving] = useState(false);
   const done = existing?.winner_team !== null && existing?.winner_team !== undefined;
 
+  const sa = parseInt(scoreA, 10), sb = parseInt(scoreB, 10);
+  const canSave = !isNaN(sa) && !isNaN(sb);
+  const resultLabel = canSave
+    ? sa > sb ? `T${teamA} wins` : sb > sa ? `T${teamB} wins` : "Draw"
+    : null;
+
   return (
     <div className={`rounded-lg border px-4 py-3 ${done ? "border-green-800 bg-green-950/10" : "border-zinc-800"}`}>
-      {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <span className="text-xs font-semibold text-zinc-400">Team {teamA} vs Team {teamB}</span>
-        {done && <span className="text-xs text-green-400">✓ Done</span>}
+        {done && <span className="text-xs text-green-400">✓ {existing?.score_a ?? ""}–{existing?.score_b ?? ""}</span>}
       </div>
       {/* Player selects */}
       <div className="flex items-center gap-2 mb-3">
         <select value={playerA} onChange={(e) => setPlayerA(e.target.value)}
           className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white focus:outline-none touch-manipulation">
-          {aMembers.map((m) => (
-            <option key={m.contestant_id} value={m.contestant_id}>{getName(m.contestant_id)} (T{teamA})</option>
-          ))}
+          {aMembers.map((m) => <option key={m.contestant_id} value={m.contestant_id}>{getName(m.contestant_id)} (T{teamA})</option>)}
         </select>
         <span className="text-zinc-600 text-xs shrink-0">vs</span>
         <select value={playerB} onChange={(e) => setPlayerB(e.target.value)}
           className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white focus:outline-none touch-manipulation">
-          {bMembers.map((m) => (
-            <option key={m.contestant_id} value={m.contestant_id}>{getName(m.contestant_id)} (T{teamB})</option>
-          ))}
+          {bMembers.map((m) => <option key={m.contestant_id} value={m.contestant_id}>{getName(m.contestant_id)} (T{teamB})</option>)}
         </select>
       </div>
-      {/* Winner + Save */}
+      {/* Score entry */}
       <div className="flex items-center gap-2">
-        <button onClick={() => setWinner(1)}
-          className={`flex-1 rounded-lg py-2.5 text-sm font-semibold transition-colors touch-manipulation ${winner === 1 ? "bg-amber-500 text-black" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}
-          style={{ WebkitTapHighlightColor: "transparent" }}>
-          {getName(playerA)} wins
-        </button>
-        <button onClick={() => setWinner(2)}
-          className={`flex-1 rounded-lg py-2.5 text-sm font-semibold transition-colors touch-manipulation ${winner === 2 ? "bg-amber-500 text-black" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}
-          style={{ WebkitTapHighlightColor: "transparent" }}>
-          {getName(playerB)} wins
-        </button>
+        <input value={scoreA} onChange={(e) => setScoreA(e.target.value)} placeholder="0"
+          inputMode="numeric" className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-center text-lg font-bold text-white focus:border-amber-500 focus:outline-none" />
+        <span className="text-zinc-500 font-bold shrink-0">–</span>
+        <input value={scoreB} onChange={(e) => setScoreB(e.target.value)} placeholder="0"
+          inputMode="numeric" className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-center text-lg font-bold text-white focus:border-amber-500 focus:outline-none" />
         <button
           onClick={async () => {
-            if (winner === null) { toast.error("Pick a winner"); return; }
+            if (!canSave) { toast.error("Enter both scores"); return; }
             setSaving(true);
-            await onSave(playerA || null, playerB || null, winner);
+            await onSave(playerA || null, playerB || null, sa, sb);
             setSaving(false);
           }}
-          disabled={saving || winner === null}
+          disabled={saving || !canSave}
           className="rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-black hover:bg-amber-400 disabled:opacity-40 touch-manipulation shrink-0"
           style={{ WebkitTapHighlightColor: "transparent" }}>
-          {saving ? "…" : done ? "✓" : "Save"}
+          {saving ? "…" : "Save"}
         </button>
       </div>
+      {resultLabel && <p className="mt-2 text-center text-xs text-zinc-500">{resultLabel}</p>}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Lives panel (Foot Tennis, Slap Cup)
+// ──────────────────────────────────────────────────────────────
+
+function LivesPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
+  const [subTab, setSubTab] = useState<"lives" | "playoffs">("lives");
+  const states = data.livesStates.filter((s) => s.game_id === game.id);
+  const { bracketA } = getLivesBrackets(game.id, data.livesStates);
+  const r2ForGame = data.round2.filter((r) => r.game_id === game.id);
+
+  const eliminated = states.filter((s) => s.eliminated_order !== null).sort((a, b) => a.eliminated_order! - b.eliminated_order!);
+  const nextElimOrder = eliminated.length + 1;
+
+  const getName = (id: string) => {
+    const c = data.contestants.find((x) => x.id === id);
+    return c ? (c.nickname ?? c.full_name.split(" ")[0]) : "?";
+  };
+
+  async function handleInit() {
+    await resetLivesGame(game.id);
+    await Promise.all(
+      data.contestants.map((c) =>
+        upsertLivesState(game.id, c.id, 3, 3, null)
+      )
+    );
+    toast.success("Lives game started — all players at 3 lives");
+    onMutate();
+  }
+
+  async function handleRemoveLife(state: LivesGameState) {
+    const newLives = state.current_lives - 1;
+    const elimOrder = newLives <= 0 ? nextElimOrder : null;
+    if (newLives <= 0 && !state.eliminated_order) {
+      toast.success(`${getName(state.contestant_id)} eliminated! Position ${12 - nextElimOrder}`);
+    }
+    await upsertLivesState(game.id, state.contestant_id, state.initial_lives, Math.max(0, newLives), elimOrder ?? state.eliminated_order ?? null);
+    onMutate();
+  }
+
+  async function handleAddLife(state: LivesGameState) {
+    if (state.eliminated_order !== null) return; // can't restore eliminated
+    await upsertLivesState(game.id, state.contestant_id, state.initial_lives, state.current_lives + 1, null);
+    onMutate();
+  }
+
+  if (states.length === 0) {
+    return (
+      <div className="rounded-xl border border-zinc-800 p-8 text-center">
+        <p className="text-zinc-400 mb-4 text-sm">Start the lives tracking for {game.name}</p>
+        <button onClick={handleInit}
+          className="rounded-lg bg-amber-500 px-6 py-3 font-semibold text-black hover:bg-amber-400 touch-manipulation">
+          Start — 3 lives each
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-4 flex items-center gap-2">
+        {(["lives", "playoffs"] as const).map((t) => (
+          <button key={t} onClick={() => setSubTab(t)}
+            className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors touch-manipulation ${subTab === t ? "bg-zinc-200 text-zinc-900" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}`}
+            style={{ WebkitTapHighlightColor: "transparent" }}>
+            {t === "lives" ? "❤️ Lives" : "🏆 Playoffs (Top 6)"}
+          </button>
+        ))}
+        <button onClick={() => { if (confirm("Reset lives game?")) handleInit(); }}
+          className="rounded-lg border border-zinc-700 px-3 py-2.5 text-xs text-zinc-600 hover:text-red-400 touch-manipulation shrink-0">
+          Reset
+        </button>
+      </div>
+
+      {subTab === "lives" && (
+        <div className="space-y-2">
+          <p className="text-xs text-zinc-500 mb-3">
+            {eliminated.length}/5 eliminated · {5 - eliminated.length} more until playoffs
+          </p>
+          {[...states]
+            .sort((a, b) => {
+              if (a.eliminated_order !== null && b.eliminated_order !== null) return a.eliminated_order - b.eliminated_order;
+              if (a.eliminated_order !== null) return 1;
+              if (b.eliminated_order !== null) return -1;
+              return b.current_lives - a.current_lives;
+            })
+            .map((s) => {
+              const isOut = s.eliminated_order !== null;
+              const pos = isOut ? 12 - s.eliminated_order! : null;
+              return (
+                <div key={s.id} className={`rounded-lg border px-4 py-3 flex items-center gap-3 ${isOut ? "border-zinc-800 bg-zinc-900/30 opacity-60" : "border-zinc-700"}`}>
+                  <div className="flex-1">
+                    <span className="text-sm font-medium text-white">{getName(s.contestant_id)}</span>
+                    {isOut && <span className="ml-2 text-xs text-zinc-500">Position {pos}</span>}
+                  </div>
+                  {/* Life dots */}
+                  <div className="flex gap-1.5 items-center">
+                    {Array.from({ length: s.initial_lives }).map((_, i) => (
+                      <div key={i} className={`h-4 w-4 rounded-full ${i < s.current_lives ? "bg-red-500" : "bg-zinc-700"}`} />
+                    ))}
+                  </div>
+                  {!isOut && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleAddLife(s)}
+                        className="h-9 w-9 rounded-lg border border-zinc-700 text-zinc-400 hover:text-green-400 font-bold touch-manipulation"
+                        style={{ WebkitTapHighlightColor: "transparent" }}>+</button>
+                      <button
+                        onClick={() => handleRemoveLife(s)}
+                        className={`h-9 w-9 rounded-lg font-bold touch-manipulation ${s.current_lives <= 1 ? "bg-red-600 text-white hover:bg-red-500" : "border border-zinc-700 text-zinc-400 hover:text-red-400"}`}
+                        style={{ WebkitTapHighlightColor: "transparent" }}>−</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+        </div>
+      )}
+
+      {subTab === "playoffs" && (
+        <>
+          {bracketA.length < 6 ? (
+            <p className="text-xs text-zinc-600 text-center py-4">Eliminate 5 players first to unlock playoffs</p>
+          ) : (
+            <div className="space-y-1">
+              <p className="text-xs text-zinc-500 mb-3">Enter playoff times for the 6 survivors (lower = better)</p>
+              {bracketA.map((cid) => {
+                const c = data.contestants.find((x) => x.id === cid)!;
+                if (!c) return null;
+                return (
+                  <TimeRow key={cid} contestant={c} gameId={game.id} round="r2"
+                    existing={r2ForGame.find((r) => r.contestant_id === cid)?.time_seconds ?? null}
+                    bracket="A"
+                    onSave={async (secs) => {
+                      const { error } = await upsertRound2(c.id, game.id, secs);
+                      if (error) { toast.error("Save failed"); return; }
+                      toast.success(`Saved — ${c.nickname ?? c.full_name.split(" ")[0]}`);
+                      onMutate();
+                    }}
+                    onDelete={async () => { await deleteRound2(c.id, game.id); onMutate(); }}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Cup format panel (Crock it)
+// ──────────────────────────────────────────────────────────────
+
+const CROCK_GROUP_LABELS: Record<number, string> = { 1: "Group A", 2: "Group B", 3: "Group C", 4: "Group D", 5: "Wildcard" };
+
+function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
+  const [subTab, setSubTab] = useState<"groups" | "knockout">("groups");
+  const gameGroups = data.crockGroups.filter((g) => g.game_id === game.id);
+  const r2ForGame = data.round2.filter((r) => r.game_id === game.id);
+
+  const getName = (id: string) => {
+    const c = data.contestants.find((x) => x.id === id);
+    return c ? (c.nickname ?? c.full_name.split(" ")[0]) : "?";
+  };
+
+  // Which players are unassigned?
+  const assignedIds = new Set(gameGroups.map((g) => g.contestant_id));
+  const unassigned = data.contestants.filter((c) => !assignedIds.has(c.id));
+
+  async function handleAssign(contestantId: string, groupNumber: number) {
+    await upsertCrockGroup(game.id, contestantId, groupNumber, null, null);
+    onMutate();
+  }
+
+  async function handleClearAssignments() {
+    if (!confirm("Clear all group assignments?")) return;
+    await saveCrockAssignments(game.id, []);
+    onMutate();
+  }
+
+  // Determine qualifiers: top 2 per group + best 3rd
+  const grouped = new Map<number, typeof gameGroups>([1, 2, 3, 4].map((n) => [n, []]));
+  for (const g of gameGroups) {
+    if (g.group_number <= 4) grouped.get(g.group_number)?.push(g);
+  }
+  const qualifierIds = new Set<string>();
+  const thirds: typeof gameGroups = [];
+  for (const [, members] of grouped) {
+    const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
+    sorted.slice(0, 2).forEach((m) => qualifierIds.add(m.contestant_id));
+    if (sorted[2]) thirds.push(sorted[2]);
+  }
+  if (thirds.length > 0) {
+    const bestThird = [...thirds].sort((a, b) => a.time_seconds! - b.time_seconds!)[0];
+    qualifierIds.add(bestThird.contestant_id);
+  }
+  // Override with manual advances flags
+  for (const g of gameGroups) {
+    if (g.advances === true) qualifierIds.add(g.contestant_id);
+    if (g.advances === false) qualifierIds.delete(g.contestant_id);
+  }
+
+  return (
+    <div>
+      <div className="mb-4 flex gap-2">
+        {(["groups", "knockout"] as const).map((t) => (
+          <button key={t} onClick={() => setSubTab(t)}
+            className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors touch-manipulation ${subTab === t ? "bg-zinc-200 text-zinc-900" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}`}
+            style={{ WebkitTapHighlightColor: "transparent" }}>
+            {t === "groups" ? "🏟 Groups" : "⚡ Knockout"}
+          </button>
+        ))}
+      </div>
+
+      {subTab === "groups" && (
+        <div>
+          {/* Assign unassigned */}
+          {unassigned.length > 0 && (
+            <div className="mb-4 rounded-xl border border-amber-900/50 bg-amber-950/20 p-4">
+              <p className="text-xs font-semibold text-amber-300 mb-3">Assign players to groups</p>
+              <div className="space-y-2">
+                {unassigned.map((c) => (
+                  <div key={c.id} className="flex items-center gap-2">
+                    <span className="flex-1 text-sm text-zinc-300">{getName(c.id)}</span>
+                    {[1, 2, 3, 4].map((g) => (
+                      <button key={g} onClick={() => handleAssign(c.id, g)}
+                        className="rounded-lg bg-zinc-800 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-amber-500 hover:text-black touch-manipulation"
+                        style={{ WebkitTapHighlightColor: "transparent" }}>
+                        {String.fromCharCode(64 + g)}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Groups with time entry */}
+          {[1, 2, 3, 4].map((gn) => {
+            const members = gameGroups.filter((g) => g.group_number === gn);
+            if (members.length === 0) return null;
+            const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
+            return (
+              <div key={gn} className="mb-4 rounded-xl border border-zinc-800 overflow-hidden">
+                <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-zinc-300">{CROCK_GROUP_LABELS[gn]}</span>
+                  <span className="text-xs text-zinc-500">{members.length} players · top 2 advance</span>
+                </div>
+                <div className="divide-y divide-zinc-800/40">
+                  {members.map((g, i) => {
+                    const isQ = sorted.indexOf(g) < 2 && g.time_seconds !== null;
+                    const c = data.contestants.find((x) => x.id === g.contestant_id)!;
+                    return (
+                      <div key={g.id} className="flex items-center gap-3 px-4 py-2">
+                        <span className={`text-xs w-4 font-bold ${isQ ? "text-green-400" : "text-zinc-600"}`}>
+                          {g.time_seconds !== null ? (sorted.indexOf(g) + 1) : "–"}
+                        </span>
+                        <span className="w-24 text-sm text-zinc-300 truncate">{getName(g.contestant_id)}</span>
+                        <input
+                          defaultValue={g.time_seconds !== null ? formatTime(g.time_seconds) : ""}
+                          placeholder="e.g. 45.32" inputMode="decimal"
+                          className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none tabular-nums"
+                          onBlur={async (e) => {
+                            const secs = parseTime(e.target.value);
+                            if (secs === null) return;
+                            await upsertCrockGroup(game.id, g.contestant_id, gn, secs, g.advances);
+                            onMutate();
+                          }}
+                        />
+                        {isQ && <span className="text-xs text-green-400 shrink-0">→ KO</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+
+          {gameGroups.length > 0 && (
+            <button onClick={handleClearAssignments}
+              className="mt-2 w-full rounded-lg border border-zinc-800 py-2 text-xs text-zinc-600 hover:text-red-400 touch-manipulation">
+              Clear all assignments
+            </button>
+          )}
+        </div>
+      )}
+
+      {subTab === "knockout" && (
+        <div>
+          {qualifierIds.size === 0 ? (
+            <p className="text-xs text-zinc-600 text-center py-4">Enter group times first to see qualifiers</p>
+          ) : (
+            <div>
+              <p className="text-xs text-zinc-500 mb-3">{qualifierIds.size} qualifiers — enter knockout times (lower = better)</p>
+              <div className="space-y-1">
+                {[...qualifierIds].map((cid) => {
+                  const c = data.contestants.find((x) => x.id === cid)!;
+                  if (!c) return null;
+                  return (
+                    <TimeRow key={cid} contestant={c} gameId={game.id} round="r2"
+                      existing={r2ForGame.find((r) => r.contestant_id === cid)?.time_seconds ?? null}
+                      bracket="A"
+                      onSave={async (secs) => {
+                        const { error } = await upsertRound2(c.id, game.id, secs);
+                        if (error) { toast.error("Save failed"); return; }
+                        toast.success(`KO saved — ${c.nickname ?? c.full_name.split(" ")[0]}`);
+                        onMutate();
+                      }}
+                      onDelete={async () => { await deleteRound2(c.id, game.id); onMutate(); }}
+                    />
+                  );
+                })}
+              </div>
+              <div className="mt-4 rounded-lg border border-zinc-800 p-3">
+                <p className="text-xs text-zinc-500">Non-qualifiers (positions {qualifierIds.size + 1}–11)</p>
+                <div className="mt-2 space-y-1">
+                  {data.contestants.filter((c) => !qualifierIds.has(c.id)).map((c) => {
+                    const grp = gameGroups.find((g) => g.contestant_id === c.id);
+                    return (
+                      <div key={c.id} className="flex justify-between text-xs text-zinc-500">
+                        <span>{getName(c.id)}</span>
+                        <span>{grp?.time_seconds !== null ? formatTime(grp?.time_seconds ?? 0) : "–"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

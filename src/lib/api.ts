@@ -8,6 +8,8 @@ import type {
   TeamGamePlayer,
   TeamGameRanking,
   ChessboardMatch,
+  LivesGameState,
+  CrockGroup,
 } from "./types";
 
 export type FetchAllResult = {
@@ -19,10 +21,12 @@ export type FetchAllResult = {
   teamPlayers: TeamGamePlayer[];
   teamRankings: TeamGameRanking[];
   chessboardMatches: ChessboardMatch[];
+  livesStates: LivesGameState[];
+  crockGroups: CrockGroup[];
 };
 
 export async function fetchAll(): Promise<FetchAllResult> {
-  const [c, g, r1, r2, b, tp, tr, cm] = await Promise.all([
+  const [c, g, r1, r2, b, tp, tr, cm, ls, cg] = await Promise.all([
     supabase.from("contestants").select("*").order("full_name"),
     supabase.from("bl_games").select("*").order("sort_order"),
     supabase.from("round1_results").select("*"),
@@ -31,6 +35,8 @@ export async function fetchAll(): Promise<FetchAllResult> {
     supabase.from("team_game_players").select("*"),
     supabase.from("team_game_rankings").select("*"),
     supabase.from("chessboard_matches").select("*"),
+    supabase.from("lives_game_state").select("*"),
+    supabase.from("crock_groups").select("*"),
   ]);
 
   return {
@@ -42,6 +48,8 @@ export async function fetchAll(): Promise<FetchAllResult> {
     teamPlayers: (tp.data ?? []) as TeamGamePlayer[],
     teamRankings: (tr.data ?? []) as TeamGameRanking[],
     chessboardMatches: (cm.data ?? []) as ChessboardMatch[],
+    livesStates: (ls.data ?? []) as LivesGameState[],
+    crockGroups: (cg.data ?? []) as CrockGroup[],
   };
 }
 
@@ -158,8 +166,13 @@ export async function upsertChessboardMatch(
   teamB: number,
   playerAId: string | null,
   playerBId: string | null,
-  winnerTeam: number | null,
+  scoreA: number | null,
+  scoreB: number | null,
 ) {
+  const winnerTeam =
+    scoreA === null || scoreB === null ? null :
+    scoreA > scoreB ? 1 :
+    scoreA < scoreB ? 2 : 0;
   return supabase.from("chessboard_matches").upsert(
     {
       game_id: gameId,
@@ -167,10 +180,76 @@ export async function upsertChessboardMatch(
       team_b: teamB,
       player_a_id: playerAId,
       player_b_id: playerBId,
+      score_a: scoreA,
+      score_b: scoreB,
       winner_team: winnerTeam,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "game_id,team_a,team_b" },
+  );
+}
+
+// ── Lives games (Foot Tennis, Slap Cup) ───────────────────────
+
+export async function upsertLivesState(
+  gameId: string,
+  contestantId: string,
+  initialLives: number,
+  currentLives: number,
+  eliminatedOrder: number | null,
+) {
+  return supabase.from("lives_game_state").upsert(
+    {
+      game_id: gameId,
+      contestant_id: contestantId,
+      initial_lives: initialLives,
+      current_lives: currentLives,
+      eliminated_order: eliminatedOrder,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "game_id,contestant_id" },
+  );
+}
+
+export async function resetLivesGame(gameId: string) {
+  return supabase.from("lives_game_state").delete().eq("game_id", gameId);
+}
+
+// ── Crock it group stage ──────────────────────────────────────
+
+export async function upsertCrockGroup(
+  gameId: string,
+  contestantId: string,
+  groupNumber: number,
+  timeSeconds: number | null,
+  advances: boolean | null,
+) {
+  return supabase.from("crock_groups").upsert(
+    {
+      game_id: gameId,
+      contestant_id: contestantId,
+      group_number: groupNumber,
+      time_seconds: timeSeconds,
+      advances,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "game_id,contestant_id" },
+  );
+}
+
+export async function saveCrockAssignments(
+  gameId: string,
+  assignments: { contestantId: string; groupNumber: number }[],
+) {
+  await supabase.from("crock_groups").delete().eq("game_id", gameId);
+  return supabase.from("crock_groups").insert(
+    assignments.map((a) => ({
+      game_id: gameId,
+      contestant_id: a.contestantId,
+      group_number: a.groupNumber,
+      time_seconds: null,
+      advances: null,
+    })),
   );
 }
 

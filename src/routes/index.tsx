@@ -142,12 +142,14 @@ function LeaderboardPage() {
     ? computeLeaderboard(
         data.contestants, data.games, data.round1, data.round2, data.bonuses,
         data.teamPlayers, data.teamRankings, data.chessboardMatches,
+        data.livesStates, data.crockGroups,
       )
     : [];
 
   const hasAnyResult = (data?.round1.length ?? 0) > 0;
   const bracketGames = data?.games.filter(
-    (g) => g.game_type === "individual" && data.round1.filter((r) => r.game_id === g.id).length >= 6,
+    (g) => (g.game_type === "individual" || g.game_type === "individual_points") &&
+           data.round1.filter((r) => r.game_id === g.id).length >= 6,
   ) ?? [];
 
   return (
@@ -289,13 +291,30 @@ function LeaderboardPage() {
                   let statusColor = "text-zinc-600";
                   let borderColor = "border-zinc-800";
 
-                  if (g.game_type === "individual") {
+                  if (g.game_type === "individual" || g.game_type === "individual_points") {
                     const r1c = data.round1.filter((r) => r.game_id === g.id).length;
                     const r2c = data.round2.filter((r) => r.game_id === g.id).length;
                     if (r2c >= 11) { statusLabel = "✓ Done"; statusColor = "text-green-400"; borderColor = "border-green-800"; }
                     else if (r2c > 0) { statusLabel = "Playoffs"; statusColor = "text-amber-400"; borderColor = "border-amber-800"; }
                     else if (r1c >= 11) { statusLabel = "R1 Done"; statusColor = "text-blue-400"; borderColor = "border-blue-800"; }
-                    else if (r1c > 0) { statusLabel = `R1 ${r1c}/11`; statusColor = "text-yellow-400"; borderColor = "border-yellow-800"; }
+                    else if (r1c > 0) { statusLabel = `${r1c}/11`; statusColor = "text-yellow-400"; borderColor = "border-yellow-800"; }
+                  } else if (g.game_type === "lives_bracket") {
+                    const lc = data.livesStates.filter((s) => s.game_id === g.id).length;
+                    const elim = data.livesStates.filter((s) => s.game_id === g.id && s.eliminated_order !== null).length;
+                    const r2c = data.round2.filter((r) => r.game_id === g.id).length;
+                    if (r2c >= 6) { statusLabel = "✓ Done"; statusColor = "text-green-400"; borderColor = "border-green-800"; }
+                    else if (r2c > 0) { statusLabel = "Playoffs"; statusColor = "text-amber-400"; borderColor = "border-amber-800"; }
+                    else if (elim >= 5) { statusLabel = "Ready KO"; statusColor = "text-blue-400"; borderColor = "border-blue-800"; }
+                    else if (lc > 0) { statusLabel = `${elim}/5 out`; statusColor = "text-yellow-400"; borderColor = "border-yellow-800"; }
+                    else { statusLabel = "❤️ Lives"; }
+                  } else if (g.game_type === "cup_format") {
+                    const gc = data.crockGroups.filter((g2) => g2.game_id === g.id).length;
+                    const r2c = data.round2.filter((r) => r.game_id === g.id).length;
+                    if (r2c >= 9) { statusLabel = "✓ Done"; statusColor = "text-green-400"; borderColor = "border-green-800"; }
+                    else if (r2c > 0) { statusLabel = "Knockout"; statusColor = "text-amber-400"; borderColor = "border-amber-800"; }
+                    else if (gc >= 11) { statusLabel = "Groups set"; statusColor = "text-blue-400"; borderColor = "border-blue-800"; }
+                    else if (gc > 0) { statusLabel = `${gc}/11 set`; statusColor = "text-yellow-400"; borderColor = "border-yellow-800"; }
+                    else { statusLabel = "🏆 Cup"; }
                   } else {
                     const tp = data.teamPlayers.filter((p) => p.game_id === g.id).length;
                     const tr = data.teamRankings.filter((r) => r.game_id === g.id && r.tiebreak_winner_id).length;
