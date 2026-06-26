@@ -763,6 +763,7 @@ function TiebreakersSetup({ game, data, ranks, onMutate }: {
 
 function PoppKoppenPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
   const [subTab, setSubTab] = useState<"teams" | "rankings" | "tiebreakers">("teams");
+  const [resetNonce, setResetNonce] = useState(0);
   const gamePlayers = data.teamPlayers.filter((p) => p.game_id === game.id);
   const gameRankings = data.teamRankings.filter((r) => r.game_id === game.id);
   const activeTeams = [1, 2, 3, 4, 5, 6].filter((t) => gamePlayers.some((p) => p.team_number === t));
@@ -770,7 +771,9 @@ function PoppKoppenPanel({ game, data, onMutate }: { game: BLGame; data: FetchAl
 
   async function handleReset() {
     if (!confirm("Reset all Popp Koppen times and rankings? Team assignments will be kept.")) return;
-    await resetPoppKoppenGame(game.id);
+    const { error } = await resetPoppKoppenGame(game.id);
+    if (error) { toast.error("Reset failed"); return; }
+    setResetNonce((n) => n + 1); // remount sub-panels so their draft inputs clear
     toast.success("Popp Koppen results cleared");
     onMutate();
   }
@@ -812,9 +815,9 @@ function PoppKoppenPanel({ game, data, onMutate }: { game: BLGame; data: FetchAl
         </button>
       </div>
 
-      {subTab === "teams" && <TeamsSetup game={game} data={data} onMutate={onMutate} />}
-      {subTab === "rankings" && <PoppKoppenRankings game={game} data={data} onMutate={onMutate} />}
-      {subTab === "tiebreakers" && <TiebreakersSetup game={game} data={data} ranks={ranksMap} onMutate={onMutate} />}
+      {subTab === "teams" && <TeamsSetup key={`teams-${resetNonce}`} game={game} data={data} onMutate={onMutate} />}
+      {subTab === "rankings" && <PoppKoppenRankings key={`rankings-${resetNonce}`} game={game} data={data} onMutate={onMutate} />}
+      {subTab === "tiebreakers" && <TiebreakersSetup key={`tb-${resetNonce}`} game={game} data={data} ranks={ranksMap} onMutate={onMutate} />}
     </div>
   );
 }

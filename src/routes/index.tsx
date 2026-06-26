@@ -381,23 +381,55 @@ function GameProgressModal({ game, data, onClose }: { game: BLGame; data: FetchA
   };
 
   // ── Popp Koppen ──
+  // Standings are derived live from R1 / playoff *times* (the `rank` column is
+  // never written for this game type), mirroring computePoppKoppenResults.
   const renderPopp = () => {
     const gamePlayers = data.teamPlayers.filter((p) => p.game_id === game.id);
-    const gameRankings = data.teamRankings.filter((r) => r.game_id === game.id && r.rank !== null).sort((a,b) => a.rank!-b.rank!);
     if (gamePlayers.length === 0) return <MEmpty msg="Teams not set up yet" />;
-    if (gameRankings.length === 0) return <MEmpty msg="Teams set — no results yet" />;
+    const gameRankings = data.teamRankings.filter((r) => r.game_id === game.id);
     const getTeamName = (t: number) => gamePlayers.filter((p) => p.team_number === t).map((m) => getName(m.contestant_id)).join(" & ") || `Team ${t}`;
+
+    const activeTeams = [...new Set(gamePlayers.map((p) => p.team_number))].sort((a, b) => a - b);
+    const n = activeTeams.length;
+    const half = Math.ceil(n / 2);
+    const r1Map = new Map<number, number>(gameRankings.filter((r) => r.r1_time_seconds != null).map((r) => [r.team_number, r.r1_time_seconds!]));
+    const playoffMap = new Map<number, number>(gameRankings.filter((r) => r.playoff_time_seconds != null).map((r) => [r.team_number, r.playoff_time_seconds!]));
+    const r1Sorted = [...activeTeams].filter((t) => r1Map.has(t)).sort((a, b) => r1Map.get(a)! - r1Map.get(b)!);
+    const allR1Done = r1Sorted.length === n;
+    if (r1Sorted.length === 0) return <MEmpty msg="Teams set — no times yet" />;
+
+    let order: { team: number; time: number | null }[];
+    if (!allR1Done) {
+      order = r1Sorted.map((t) => ({ team: t, time: r1Map.get(t)! }));
+    } else {
+      const topG = r1Sorted.slice(0, half);
+      const botG = r1Sorted.slice(half);
+      const topPO = [...topG].filter((t) => playoffMap.has(t)).sort((a, b) => playoffMap.get(a)! - playoffMap.get(b)!);
+      const botPO = [...botG].filter((t) => playoffMap.has(t)).sort((a, b) => playoffMap.get(a)! - playoffMap.get(b)!);
+      const top = topPO.length === topG.length ? topPO : topG;
+      const bot = botPO.length === botG.length ? botPO : botG;
+      order = [...top, ...bot].map((t) => ({ team: t, time: playoffMap.get(t) ?? r1Map.get(t) ?? null }));
+    }
+    const pending = activeTeams.filter((t) => !r1Map.has(t));
+
     let pos = 1;
     return (<>
-      {gameRankings.map((r) => {
-        const members = gamePlayers.filter((p) => p.team_number === r.team_number);
+      <div className="px-4 py-2 text-xs text-zinc-500 border-b border-zinc-800/40">
+        {r1Sorted.length}/{n} teams timed{allR1Done ? (playoffMap.size > 0 ? " · playoffs" : " · R1 done") : " · Round 1"}
+      </div>
+      {order.map(({ team, time }) => {
+        const members = gamePlayers.filter((p) => p.team_number === team);
         const startPos = pos; pos += members.length === 1 ? 1 : 2;
-        return (<div key={r.team_number} className={`flex items-center gap-3 px-4 py-2.5 border-b border-zinc-800/30 ${startPos===1?"bg-amber-950/20":""}`}>
-          <span className="text-xs font-bold text-amber-400 w-5 text-right shrink-0">{startPos}</span>
-          <span className="flex-1 text-sm text-zinc-200">{getTeamName(r.team_number)}</span>
-          {members.length === 1 && <span className="text-xs text-zinc-600">solo</span>}
+        const posLabel = members.length === 1 ? `${startPos}` : `${startPos}–${startPos + 1}`;
+        return (<div key={team} className={`flex items-center gap-3 px-4 py-2.5 border-b border-zinc-800/30 ${startPos === 1 ? "bg-amber-950/20" : ""}`}>
+          <span className="text-xs font-bold text-amber-400 w-8 text-right shrink-0">{posLabel}</span>
+          <span className="flex-1 text-sm text-zinc-200">{getTeamName(team)}{members.length === 1 ? " (solo)" : ""}</span>
+          <span className="text-sm tabular-nums shrink-0 text-zinc-300">{time != null ? formatTime(time) : "–"}</span>
         </div>);
       })}
+      {pending.map((t) => (
+        <MRow key={t} rank={null} name={getTeamName(t)} value="–" />
+      ))}
     </>);
   };
 
@@ -478,17 +510,29 @@ function gameStatus(g: BLGame, data: FetchAllResult): { label: string; color: st
     else if (gc >= 11) { label = "Groups set"; color = "text-blue-400"; border = "border-blue-800"; }
     else if (gc > 0) { label = `${gc}/11 set`; color = "text-yellow-400"; border = "border-yellow-800"; }
     else { label = "🏆 Cup"; }
-  } else {
+  } else if (g.game_type === "team_chess") {
     const tp = data.teamPlayers.filter((p) => p.game_id === g.id).length;
     const tr = data.teamRankings.filter((r) => r.game_id === g.id && r.tiebreak_winner_id).length;
-    const matches = g.game_type === "team_chess"
-      ? data.chessboardMatches.filter((m) => m.game_id === g.id && m.winner_team !== null).length : 0;
+    const matches = data.chessboardMatches.filter((m) => m.game_id === g.id && m.winner_team !== null).length;
     if (tr === 5) { label = "✓ Done"; color = "text-green-400"; border = "border-green-800"; }
-    else if (g.game_type === "team_chess" && matches > 0) { label = `League ${matches}/10`; color = "text-amber-400"; border = "border-amber-800"; }
-    else if (g.game_type === "team_popp" && data.teamRankings.filter((r) => r.game_id === g.id && r.rank !== null).length > 0) {
-      label = "Results in"; color = "text-amber-400"; border = "border-amber-800";
-    } else if (tp > 0) { label = "Teams set"; color = "text-blue-400"; border = "border-blue-800"; }
-    else { label = g.game_type === "team_chess" ? "♟️ League" : "👥 Team"; }
+    else if (matches > 0) { label = `League ${matches}/10`; color = "text-amber-400"; border = "border-amber-800"; }
+    else if (tp > 0) { label = "Teams set"; color = "text-blue-400"; border = "border-blue-800"; }
+    else { label = "♟️ League"; }
+  } else {
+    // team_popp — status derived from R1 / playoff *times* + tiebreaks (no `rank` column written)
+    const players = data.teamPlayers.filter((p) => p.game_id === g.id);
+    const teams = [...new Set(players.map((p) => p.team_number))];
+    const nTeams = teams.length;
+    const pairTeams = teams.filter((t) => players.filter((p) => p.team_number === t).length > 1).length;
+    const ranks = data.teamRankings.filter((r) => r.game_id === g.id);
+    const r1Count = ranks.filter((r) => r.r1_time_seconds != null).length;
+    const poCount = ranks.filter((r) => r.playoff_time_seconds != null).length;
+    const tbCount = ranks.filter((r) => r.tiebreak_winner_id).length;
+    if (nTeams > 0 && poCount >= nTeams && tbCount >= pairTeams) { label = "✓ Done"; color = "text-green-400"; border = "border-green-800"; }
+    else if (poCount > 0) { label = "Playoffs"; color = "text-amber-400"; border = "border-amber-800"; }
+    else if (r1Count > 0) { label = `${r1Count}/${nTeams} timed`; color = "text-yellow-400"; border = "border-yellow-800"; }
+    else if (players.length > 0) { label = "Teams set"; color = "text-blue-400"; border = "border-blue-800"; }
+    else { label = "👥 Team"; }
   }
 
   // "Live" = the game has started but isn't finished yet.
