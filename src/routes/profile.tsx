@@ -32,14 +32,17 @@ function ProfilePage() {
     setUploading(true);
     try {
       const url = await uploadAvatar(user.id, file);
+      const { error } = await updateContestantProfile(user.id, { photo_url: url });
+      if (error) throw error;
       setPhotoUrl(url);
-      await updateContestantProfile(user.id, { photo_url: url });
+      setUser({ ...user, photo_url: url });
       toast.success("Photo updated!");
     } catch (err) {
-      toast.error("Photo upload failed — make sure the 'avatars' bucket exists in Supabase Storage.");
+      toast.error(err instanceof Error ? err.message : "Photo upload failed — please try another image.");
       console.error(err);
     } finally {
       setUploading(false);
+      if (fileRef.current) fileRef.current.value = ""; // allow re-picking the same file
     }
   }
 
@@ -96,7 +99,6 @@ function ProfilePage() {
             ref={fileRef}
             type="file"
             accept="image/*"
-            capture="environment"
             className="hidden"
             onChange={handlePhotoChange}
           />

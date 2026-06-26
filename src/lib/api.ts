@@ -85,13 +85,48 @@ export async function updateContestantProfile(
   return supabase.from("contestants").update(updates).eq("id", id);
 }
 
-export async function uploadAvatar(contestantId: string, file: File) {
-  const ext = file.name.split(".").pop() ?? "jpg";
-  const path = `${contestantId}.${ext}`;
-  const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: true });
-  if (error) throw error;
-  const { data } = supabase.storage.from("avatars").getPublicUrl(path);
-  return data.publicUrl;
+// Process a chosen picture entirely in the browser: shrink + center-crop to a
+// small square JPEG and return it as a data URL. This is stored directly in
+// contestants.photo_url (a text column), so photo upload needs NO Supabase
+// Storage bucket or storage policies — it just works with the normal app key.
+export async function uploadAvatar(_contestantId: string, file: File): Promise<string> {
+  if (!file.type.startsWith("image/")) throw new Error("Please choose an image file");
+  const src = await readFileAsDataURL(file);
+  return resizeToSquareDataUrl(src, 256, 0.82);
+}
+
+function readFileAsDataURL(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("Could not read the image file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function resizeToSquareDataUrl(src: string, size: number, quality: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { reject(new Error("Image processing not supported on this device")); return; }
+      // center-crop to a square, then scale down
+      const min = Math.min(img.width, img.height);
+      const sx = (img.width - min) / 2;
+      const sy = (img.height - min) / 2;
+      ctx.drawImage(img, sx, sy, min, min, 0, 0, size, size);
+      try {
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      } catch (e) {
+        reject(e instanceof Error ? e : new Error("Could not process the image"));
+      }
+    };
+    img.onerror = () => reject(new Error("Could not load the selected image"));
+    img.src = src;
+  });
 }
 
 // ── Individual game times ──────────────────────────────────────
