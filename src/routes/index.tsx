@@ -139,11 +139,16 @@ function LeaderboardPage() {
   });
 
   const rows = data
-    ? computeLeaderboard(data.contestants, data.games, data.round1, data.round2, data.bonuses)
+    ? computeLeaderboard(
+        data.contestants, data.games, data.round1, data.round2, data.bonuses,
+        data.teamPlayers, data.teamRankings, data.chessboardMatches,
+      )
     : [];
 
   const hasAnyResult = (data?.round1.length ?? 0) > 0;
-  const bracketGames = data?.games.filter((g) => (data.round1.filter((r) => r.game_id === g.id).length) >= 6) ?? [];
+  const bracketGames = data?.games.filter(
+    (g) => g.game_type === "individual" && data.round1.filter((r) => r.game_id === g.id).length >= 6,
+  ) ?? [];
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
@@ -292,31 +297,34 @@ function LeaderboardPage() {
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-500">Games</h2>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
                 {data.games.map((g) => {
-                  const r1c = data.round1.filter((r) => r.game_id === g.id).length;
-                  const r2c = data.round2.filter((r) => r.game_id === g.id).length;
-                  const done = r2c >= 11;
-                  const playoffs = r2c > 0;
-                  const r1done = r1c >= 11;
-                  const active = r1c > 0 && r1c < 11;
+                  let statusLabel = "Upcoming";
+                  let statusColor = "text-zinc-600";
+                  let borderColor = "border-zinc-800";
+
+                  if (g.game_type === "individual") {
+                    const r1c = data.round1.filter((r) => r.game_id === g.id).length;
+                    const r2c = data.round2.filter((r) => r.game_id === g.id).length;
+                    if (r2c >= 11) { statusLabel = "✓ Done"; statusColor = "text-green-400"; borderColor = "border-green-800"; }
+                    else if (r2c > 0) { statusLabel = "Playoffs"; statusColor = "text-amber-400"; borderColor = "border-amber-800"; }
+                    else if (r1c >= 11) { statusLabel = "R1 Done"; statusColor = "text-blue-400"; borderColor = "border-blue-800"; }
+                    else if (r1c > 0) { statusLabel = `R1 ${r1c}/11`; statusColor = "text-yellow-400"; borderColor = "border-yellow-800"; }
+                  } else {
+                    const tp = data.teamPlayers.filter((p) => p.game_id === g.id).length;
+                    const tr = data.teamRankings.filter((r) => r.game_id === g.id && r.tiebreak_winner_id).length;
+                    const matches = g.game_type === "team_chess"
+                      ? data.chessboardMatches.filter((m) => m.game_id === g.id && m.winner_team !== null).length : 0;
+                    if (tr === 5) { statusLabel = "✓ Done"; statusColor = "text-green-400"; borderColor = "border-green-800"; }
+                    else if (g.game_type === "team_chess" && matches > 0) { statusLabel = `League ${matches}/10`; statusColor = "text-amber-400"; borderColor = "border-amber-800"; }
+                    else if (g.game_type === "team_popp" && data.teamRankings.filter((r) => r.game_id === g.id && r.rank !== null).length > 0) {
+                      statusLabel = "Results in"; statusColor = "text-amber-400"; borderColor = "border-amber-800";
+                    } else if (tp > 0) { statusLabel = "Teams set"; statusColor = "text-blue-400"; borderColor = "border-blue-800"; }
+                    else { statusLabel = g.game_type === "team_chess" ? "♟️ League" : "👥 Team"; }
+                  }
+
                   return (
-                    <div
-                      key={g.id}
-                      className={`rounded-lg border px-3 py-2 text-center ${
-                        done
-                          ? "border-green-800 bg-green-950/30"
-                          : playoffs
-                          ? "border-amber-800 bg-amber-950/30"
-                          : r1done
-                          ? "border-blue-800 bg-blue-950/20"
-                          : active
-                          ? "border-yellow-800 bg-yellow-950/20"
-                          : "border-zinc-800"
-                      }`}
-                    >
+                    <div key={g.id} className={`rounded-lg border px-3 py-2 text-center ${borderColor}`}>
                       <div className="text-xs font-semibold text-zinc-300 truncate">{g.name}</div>
-                      <div className={`mt-0.5 text-[10px] ${done ? "text-green-400" : playoffs ? "text-amber-400" : r1done ? "text-blue-400" : active ? "text-yellow-400" : "text-zinc-600"}`}>
-                        {done ? "✓ Done" : playoffs ? "Playoffs" : r1done ? "R1 Done" : active ? `R1 ${r1c}/11` : "Upcoming"}
-                      </div>
+                      <div className={`mt-0.5 text-[10px] ${statusColor}`}>{statusLabel}</div>
                     </div>
                   );
                 })}

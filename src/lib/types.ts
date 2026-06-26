@@ -11,6 +11,7 @@ export type BLGame = {
   id: string;
   name: string;
   sort_order: number;
+  game_type: "individual" | "team_popp" | "team_chess";
 };
 
 export type Round1Result = {
@@ -35,6 +36,35 @@ export type BonusPoint = {
   points: number;
   reason: string | null;
   created_at: string;
+};
+
+export type TeamGamePlayer = {
+  id: string;
+  game_id: string;
+  contestant_id: string;
+  team_number: number;
+  is_displaced: boolean;
+  created_at: string;
+};
+
+export type TeamGameRanking = {
+  id: string;
+  game_id: string;
+  team_number: number;
+  rank: number | null;
+  tiebreak_winner_id: string | null;
+  updated_at: string;
+};
+
+export type ChessboardMatch = {
+  id: string;
+  game_id: string;
+  team_a: number;
+  team_b: number;
+  player_a_id: string | null;
+  player_b_id: string | null;
+  winner_team: number | null;
+  updated_at: string;
 };
 
 export type GameResult = {
