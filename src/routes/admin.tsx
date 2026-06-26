@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import {
   fetchAll,
@@ -155,8 +155,11 @@ function TimesTab({ data, onMutate }: { data: FetchAllResult; onMutate: () => vo
         )}
       </div>
 
-      {(game?.game_type === "individual" || game?.game_type === "individual_points") && (
-        <IndividualTimesPanel game={game} data={data} onMutate={onMutate} isPoints={game.game_type === "individual_points"} />
+      {game?.game_type === "individual" && (
+        <IndividualTimesPanel game={game} data={data} onMutate={onMutate} />
+      )}
+      {game?.game_type === "individual_points" && (
+        <CanBaseballPanel game={game} data={data} onMutate={onMutate} />
       )}
       {game?.game_type === "lives_bracket" && (
         <LivesPanel game={game} data={data} onMutate={onMutate} />
@@ -178,7 +181,7 @@ function TimesTab({ data, onMutate }: { data: FetchAllResult; onMutate: () => vo
 // Individual game time entry
 // ──────────────────────────────────────────────────────────────
 
-function IndividualTimesPanel({ game, data, onMutate, isPoints = false }: { game: BLGame; data: FetchAllResult; onMutate: () => void; isPoints?: boolean }) {
+function IndividualTimesPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
   const r1ForGame = data.round1.filter((r) => r.game_id === game.id);
   const r2ForGame = data.round2.filter((r) => r.game_id === game.id);
   const { bracketA, bracketB } = getBrackets(game.id, data.round1);
@@ -187,20 +190,30 @@ function IndividualTimesPanel({ game, data, onMutate, isPoints = false }: { game
   return (
     <>
       <div className="mb-5 rounded-xl border border-zinc-800 overflow-hidden">
-        <div className="bg-zinc-900/70 px-4 py-3 border-b border-zinc-800">
-          <h3 className="font-semibold text-zinc-200">
-            {isPoints ? "Points — All contestants" : "Round 1 — All contestants"}
-          </h3>
-          <p className="text-xs text-zinc-500 mt-0.5">
-            {isPoints ? "Enter points scored (e.g. 7)" : "Seconds (e.g. 45.32) or mm:ss (e.g. 1:23.45)"}
-          </p>
+        <div className="bg-zinc-900/70 px-4 py-3 border-b border-zinc-800 flex items-center justify-between gap-2">
+          <div>
+            <h3 className="font-semibold text-zinc-200">Round 1 — All contestants</h3>
+            <p className="text-xs text-zinc-500 mt-0.5">Seconds (e.g. 45.321) or mm:ss.ms (e.g. 1:23.456)</p>
+          </div>
+          <button
+            onClick={async () => {
+              if (!confirm("Clear all times for this game?")) return;
+              await Promise.all([
+                ...r1ForGame.map((r) => deleteRound1(r.contestant_id, game.id)),
+                ...r2ForGame.map((r) => deleteRound2(r.contestant_id, game.id)),
+              ]);
+              onMutate();
+              toast.success("Times cleared");
+            }}
+            className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-500 hover:text-red-400 shrink-0 touch-manipulation">
+            Reset
+          </button>
         </div>
         <div className="divide-y divide-zinc-800/50">
           {data.contestants.map((c) => (
             <TimeRow key={c.id} contestant={c} gameId={game.id} round="r1"
               existing={r1ForGame.find((r) => r.contestant_id === c.id)?.time_seconds ?? null}
               bracket={hasBrackets ? (bracketA.includes(c.id) ? "A" : "B") : null}
-              isPoints={isPoints}
               onSave={async (secs) => {
                 const { error } = await upsertRound1(c.id, game.id, secs);
                 if (error) { toast.error("Save failed"); return; }
@@ -231,7 +244,6 @@ function IndividualTimesPanel({ game, data, onMutate, isPoints = false }: { game
                       <TimeRow key={cid} contestant={c} gameId={game.id} round="r2"
                         existing={r2ForGame.find((r) => r.contestant_id === cid)?.time_seconds ?? null}
                         bracket={ids === bracketA ? "A" : "B"}
-                        isPoints={isPoints}
                         onSave={async (secs) => {
                           const { error } = await upsertRound2(c.id, game.id, secs);
                           if (error) { toast.error("Save failed"); return; }
@@ -258,25 +270,16 @@ function IndividualTimesPanel({ game, data, onMutate, isPoints = false }: { game
   );
 }
 
-function TimeRow({ contestant, gameId, round, existing, bracket, isPoints = false, onSave, onDelete }: {
+function TimeRow({ contestant, gameId, round, existing, bracket, onSave, onDelete }: {
   contestant: Contestant; gameId: string; round: "r1" | "r2"; existing: number | null;
-  bracket: "A" | "B" | null; isPoints?: boolean; onSave: (s: number) => Promise<void>; onDelete: () => Promise<void>;
+  bracket: "A" | "B" | null; onSave: (s: number) => Promise<void>; onDelete: () => Promise<void>;
 }) {
-  const displayVal = (v: number) => isPoints ? v.toString() : formatTime(v);
-  const [val, setVal] = useState(existing !== null ? displayVal(existing) : "");
+  const [val, setVal] = useState(existing !== null ? formatTime(existing) : "");
   const [saving, setSaving] = useState(false);
   const name = contestant.nickname ?? contestant.full_name.split(" ")[0];
-  const isDirty = val !== (existing !== null ? displayVal(existing) : "");
+  const isDirty = val !== (existing !== null ? formatTime(existing) : "");
 
   async function handleSave() {
-    if (isPoints) {
-      const pts = parseFloat(val.trim());
-      if (isNaN(pts) || pts < 0) { toast.error("Enter a valid score"); return; }
-      setSaving(true);
-      await onSave(pts);
-      setSaving(false);
-      return;
-    }
     const secs = parseTime(val);
     if (!secs || secs <= 0) { toast.error("Invalid time"); return; }
     setSaving(true);
@@ -291,7 +294,7 @@ function TimeRow({ contestant, gameId, round, existing, bracket, isPoints = fals
       )}
       <span className="w-24 text-sm text-zinc-300 truncate shrink-0">{name}</span>
       <input value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
-        placeholder={isPoints ? "e.g. 7" : "e.g. 45.32"} inputMode="decimal"
+        placeholder="e.g. 45.321" inputMode="decimal"
         className="flex-1 min-w-0 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white placeholder-zinc-600 focus:border-amber-500 focus:outline-none tabular-nums" />
       {isDirty && val && (
         <button onClick={handleSave} disabled={saving}
@@ -310,180 +313,312 @@ function TimeRow({ contestant, gameId, round, existing, bracket, isPoints = fals
 }
 
 // ──────────────────────────────────────────────────────────────
-// Shared: Teams setup (used by both Popp Koppen and Chessboard)
+// Can Baseball — points game with bulk Save All + both playoffs
+// ──────────────────────────────────────────────────────────────
+
+function PointsPlayoffRow({ contestant, gameId, existing, onMutate }: {
+  contestant: Contestant; gameId: string; existing: number | null; onMutate: () => void;
+}) {
+  const [val, setVal] = useState(existing !== null ? existing.toString() : "");
+  const isDirty = val !== (existing !== null ? existing.toString() : "");
+  const name = contestant.nickname ?? contestant.full_name.split(" ")[0];
+  return (
+    <div className="flex items-center gap-2 px-4 py-2.5 hover:bg-zinc-800/20">
+      <span className="w-24 text-sm text-zinc-300 truncate shrink-0">{name}</span>
+      <input value={val} onChange={(e) => setVal(e.target.value)} placeholder="e.g. 7" inputMode="decimal"
+        className="flex-1 min-w-0 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white placeholder-zinc-600 focus:border-amber-500 focus:outline-none tabular-nums" />
+      {isDirty && val && (
+        <button onClick={async () => {
+          const pts = parseFloat(val);
+          if (isNaN(pts)) { toast.error("Invalid score"); return; }
+          const { error } = await upsertRound2(contestant.id, gameId, pts);
+          if (error) { toast.error("Save failed"); return; }
+          toast.success(`Saved — ${name}`);
+          onMutate();
+        }} className="rounded-lg bg-amber-500 px-3 py-2.5 text-sm font-semibold text-black hover:bg-amber-400 shrink-0 touch-manipulation"
+          style={{ WebkitTapHighlightColor: "transparent" }}>Save</button>
+      )}
+      {!isDirty && existing !== null && (
+        <button onClick={async () => { await deleteRound2(contestant.id, gameId); setVal(""); onMutate(); }}
+          className="rounded-lg border border-zinc-700 px-3 py-2.5 text-sm text-zinc-500 hover:text-red-400 shrink-0 touch-manipulation"
+          style={{ WebkitTapHighlightColor: "transparent" }}>×</button>
+      )}
+    </div>
+  );
+}
+
+function CanBaseballPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
+  const r1 = data.round1.filter((r) => r.game_id === game.id);
+  const r2 = data.round2.filter((r) => r.game_id === game.id);
+
+  // Bracket A = top 6 by score (descending), Bracket B = bottom 5
+  const r1sorted = [...r1].sort((a, b) => b.time_seconds - a.time_seconds);
+  const bracketA = r1sorted.slice(0, 6).map((r) => r.contestant_id);
+  const bracketB = r1sorted.slice(6).map((r) => r.contestant_id);
+  const hasBrackets = r1sorted.length >= 11;
+
+  const [scores, setScores] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const c of data.contestants) {
+      const ex = r1.find((r) => r.contestant_id === c.id)?.time_seconds ?? null;
+      init[c.id] = ex !== null ? ex.toString() : "";
+    }
+    return init;
+  });
+  const [saving, setSaving] = useState(false);
+
+  async function handleSaveAll() {
+    const entries = data.contestants
+      .map((c) => ({ c, val: parseFloat(scores[c.id] ?? "") }))
+      .filter(({ val }) => !isNaN(val) && val >= 0);
+    if (entries.length === 0) { toast.error("No scores to save"); return; }
+    setSaving(true);
+    await Promise.all(entries.map(({ c, val }) => upsertRound1(c.id, game.id, val)));
+    setSaving(false);
+    toast.success(`Saved ${entries.length} scores`);
+    onMutate();
+  }
+
+  async function handleResetAll() {
+    if (!confirm("Clear all Can Baseball scores?")) return;
+    setSaving(true);
+    const all = [...r1, ...r2];
+    await Promise.all([
+      ...r1.map((r) => deleteRound1(r.contestant_id, game.id)),
+      ...r2.map((r) => deleteRound2(r.contestant_id, game.id)),
+    ]);
+    setScores(() => {
+      const m: Record<string, string> = {};
+      for (const c of data.contestants) m[c.id] = "";
+      return m;
+    });
+    setSaving(false);
+    toast.success("Scores cleared");
+    onMutate();
+  }
+
+  return (
+    <>
+      <div className="mb-5 rounded-xl border border-zinc-800 overflow-hidden">
+        <div className="bg-zinc-900/70 px-4 py-3 border-b border-zinc-800 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-zinc-200">Can Baseball — Scores (higher = better)</h3>
+            <p className="text-xs text-zinc-500 mt-0.5">Enter all scores, then Save All</p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button onClick={handleResetAll} disabled={saving}
+              className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-500 hover:text-red-400 touch-manipulation">
+              Reset
+            </button>
+            <button onClick={handleSaveAll} disabled={saving}
+              className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black hover:bg-amber-400 disabled:opacity-50 touch-manipulation"
+              style={{ WebkitTapHighlightColor: "transparent" }}>
+              {saving ? "…" : "Save All"}
+            </button>
+          </div>
+        </div>
+        <div className="divide-y divide-zinc-800/50">
+          {data.contestants.map((c) => {
+            const name = c.nickname ?? c.full_name.split(" ")[0];
+            const saved = r1.find((r) => r.contestant_id === c.id)?.time_seconds ?? null;
+            const cur = scores[c.id] ?? "";
+            const isDirty = cur !== (saved !== null ? saved.toString() : "");
+            const bracket = hasBrackets ? (bracketA.includes(c.id) ? "A" : "B") : null;
+            return (
+              <div key={c.id} className="flex items-center gap-2 px-4 py-2.5 hover:bg-zinc-800/20">
+                {bracket && (
+                  <span className={`text-xs font-bold w-4 shrink-0 ${bracket === "A" ? "text-green-400" : "text-zinc-500"}`}>{bracket}</span>
+                )}
+                <span className="w-24 text-sm text-zinc-300 truncate shrink-0">{name}</span>
+                <input
+                  value={cur}
+                  onChange={(e) => setScores((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                  placeholder="e.g. 7"
+                  inputMode="decimal"
+                  className="flex-1 min-w-0 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white placeholder-zinc-600 focus:border-amber-500 focus:outline-none tabular-nums"
+                />
+                {saved !== null && (
+                  <span className={`text-xs shrink-0 tabular-nums ${isDirty ? "text-amber-500" : "text-zinc-600"}`}>
+                    {isDirty ? "● " : "✓ "}{saved}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {hasBrackets && (
+        <div className="rounded-xl border border-zinc-800 overflow-hidden">
+          <div className="bg-zinc-900/70 px-4 py-3 border-b border-zinc-800">
+            <h3 className="font-semibold text-zinc-200">Playoffs</h3>
+            <p className="text-xs text-zinc-500 mt-0.5">A bracket → positions 1–6 · B bracket → positions 7–11 · higher score = better</p>
+          </div>
+          <div className="p-4 grid gap-4 sm:grid-cols-2">
+            {[{ ids: bracketA, label: "🏆 Bracket A (Top 6)", color: "text-green-400" },
+              { ids: bracketB, label: "Bracket B (Bottom 5)", color: "text-zinc-400" }].map(({ ids, label, color }) => (
+              <div key={label}>
+                <div className={`mb-2 text-xs font-semibold uppercase tracking-wide ${color}`}>{label}</div>
+                <div className="space-y-0.5">
+                  {ids.map((cid) => {
+                    const c = data.contestants.find((x) => x.id === cid)!;
+                    if (!c) return null;
+                    return (
+                      <PointsPlayoffRow key={cid} contestant={c} gameId={game.id}
+                        existing={r2.find((r) => r.contestant_id === cid)?.time_seconds ?? null}
+                        onMutate={onMutate}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!hasBrackets && (
+        <p className="text-xs text-zinc-600 text-center py-3">Save all 11 scores to unlock playoff brackets</p>
+      )}
+    </>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Shared: Teams setup (Popp Koppen + Chessboard)
+// 6 teams: Teams 1-5 are pairs, Team 6 is solo (#11 by standings)
+// Auto-saves on first open; editable via dropdowns
 // ──────────────────────────────────────────────────────────────
 
 function TeamsSetup({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
-  // Compute current standings to determine team pairs
   const leaderboard = computeLeaderboard(
     data.contestants, data.games, data.round1, data.round2, data.bonuses,
     data.teamPlayers, data.teamRankings, data.chessboardMatches,
   );
-
   const ranked = leaderboard.map((r) => r.contestant);
   const existingPlayers = data.teamPlayers.filter((p) => p.game_id === game.id);
-  const hasTeams = existingPlayers.length > 0;
 
-  // Suggested pairings based on standings
-  const pairs: [Contestant, Contestant][] = [
-    [ranked[0], ranked[9]],
-    [ranked[1], ranked[8]],
-    [ranked[2], ranked[7]],
-    [ranked[3], ranked[6]],
-    [ranked[4], ranked[5]],
-  ];
-  const eleventh = ranked[10];
+  function buildDefault(): Record<string, number> {
+    const m: Record<string, number> = {};
+    [[0, 9], [1, 8], [2, 7], [3, 6], [4, 5]].forEach(([ia, ib], i) => {
+      if (ranked[ia]) m[ranked[ia].id] = i + 1;
+      if (ranked[ib]) m[ranked[ib].id] = i + 1;
+    });
+    if (ranked[10]) m[ranked[10].id] = 6;
+    return m;
+  }
 
-  const [eleventhTeam, setEleventhTeam] = useState<number>(1);
-  const [eleventhPlaysWith, setEleventhPlaysWith] = useState<string>(pairs[0]?.[0]?.id ?? "");
+  const [assignments, setAssignments] = useState<Record<string, number>>(() => {
+    if (existingPlayers.length > 0) {
+      const m: Record<string, number> = {};
+      for (const p of existingPlayers) m[p.contestant_id] = p.team_number;
+      return m;
+    }
+    return ranked.length >= 11 ? buildDefault() : {};
+  });
   const [saving, setSaving] = useState(false);
 
-  const chosenPair = pairs[eleventhTeam - 1];
-  const displacedId = chosenPair?.find((c) => c.id !== eleventhPlaysWith)?.id ?? null;
-  const displacedName = data.contestants.find((c) => c.id === displacedId);
-
-  async function handleSave() {
-    if (!eleventh) { toast.error("Not enough contestants"); return; }
-    setSaving(true);
-
-    const assignments: { contestantId: string; teamNumber: number; isDisplaced: boolean }[] = [];
-    for (let i = 0; i < 5; i++) {
-      const [a, b] = pairs[i];
-      const teamNum = i + 1;
-      if (teamNum === eleventhTeam) {
-        // This team gets #11
-        assignments.push({ contestantId: eleventh.id, teamNumber: teamNum, isDisplaced: false });
-        // The chosen partner stays in
-        assignments.push({ contestantId: eleventhPlaysWith, teamNumber: teamNum, isDisplaced: false });
-        // The displaced one
-        const dispId = [a, b].find((c) => c.id !== eleventhPlaysWith)!.id;
-        assignments.push({ contestantId: dispId, teamNumber: teamNum, isDisplaced: true });
-      } else {
-        assignments.push({ contestantId: a.id, teamNumber: teamNum, isDisplaced: false });
-        assignments.push({ contestantId: b.id, teamNumber: teamNum, isDisplaced: false });
-      }
+  // Auto-save defaults on first open if no teams exist
+  useEffect(() => {
+    if (existingPlayers.length === 0 && ranked.length >= 11) {
+      const defaults = buildDefault();
+      setAssignments(defaults);
+      saveTeamAssignments(
+        game.id,
+        Object.entries(defaults).map(([cid, team]) => ({ contestantId: cid, teamNumber: team, isDisplaced: false })),
+      ).then(() => onMutate());
     }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const { error } = await saveTeamAssignments(game.id, assignments);
+  async function doSave(map: Record<string, number>) {
+    setSaving(true);
+    const { error } = await saveTeamAssignments(
+      game.id,
+      Object.entries(map).map(([cid, team]) => ({ contestantId: cid, teamNumber: team, isDisplaced: false })),
+    );
     setSaving(false);
-    if (error) { toast.error("Save failed: " + (error as any).message); return; }
-    toast.success("Teams saved!");
+    if (error) { toast.error("Save failed"); return; }
     onMutate();
   }
 
+  async function handleSave() {
+    await doSave(assignments);
+    toast.success("Teams saved!");
+  }
+
+  async function handleAutoSet() {
+    const defaults = buildDefault();
+    setAssignments(defaults);
+    await doSave(defaults);
+    toast.success("Auto-set from standings!");
+  }
+
   const getName = (c: Contestant) => c.nickname ?? c.full_name.split(" ")[0];
+  const teamGroups = [1, 2, 3, 4, 5, 6].map((t) => ({
+    team: t,
+    members: ranked.filter((c) => assignments[c.id] === t),
+  }));
 
   return (
     <div>
-      {/* Current standings context */}
+      {/* Standings */}
       <div className="mb-4 rounded-lg border border-zinc-800 p-3">
-        <p className="text-xs font-semibold text-zinc-400 mb-2">Current standings (used for team formation)</p>
+        <p className="text-xs font-semibold text-zinc-400 mb-2">Standings — teams auto-set from these (#1+#10, #2+#9, … #11 solo)</p>
         <div className="grid grid-cols-2 gap-1 text-xs text-zinc-400">
           {leaderboard.slice(0, 11).map((r) => (
-            <div key={r.contestant.id}>
-              #{r.rank} {getName(r.contestant)} <span className="text-zinc-600">({r.total}pts)</span>
+            <div key={r.contestant.id}>#{r.rank} {getName(r.contestant)} <span className="text-zinc-600">({r.total}pts)</span></div>
+          ))}
+        </div>
+      </div>
+
+      {/* Team summary cards */}
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {teamGroups.map(({ team, members }) => (
+          <div key={team} className={`rounded-lg border p-2.5 ${team === 6 ? "border-amber-900/50 bg-amber-950/10" : "border-zinc-800"}`}>
+            <div className="text-xs font-semibold mb-1">
+              <span className="text-amber-500">Team {team}</span>
+              {team === 6 && <span className="text-zinc-500 ml-1">(solo)</span>}
+            </div>
+            {members.length === 0
+              ? <div className="text-xs text-zinc-700">—</div>
+              : members.map((c) => <div key={c.id} className="text-xs text-zinc-300">{getName(c)}</div>)}
+          </div>
+        ))}
+      </div>
+
+      {/* Reassignment table */}
+      <div className="mb-4 rounded-xl border border-zinc-800 overflow-hidden">
+        <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800 flex items-center justify-between">
+          <span className="text-xs font-semibold text-zinc-300">Change team assignments</span>
+          <button onClick={handleAutoSet} disabled={saving}
+            className="text-xs text-amber-500 hover:text-amber-400 touch-manipulation" style={{ WebkitTapHighlightColor: "transparent" }}>
+            ↺ Reset to standings
+          </button>
+        </div>
+        <div className="divide-y divide-zinc-800/40">
+          {ranked.slice(0, 11).map((c, i) => (
+            <div key={c.id} className="flex items-center gap-2 px-4 py-2.5">
+              <span className="text-xs text-zinc-600 w-5 shrink-0">#{i + 1}</span>
+              <span className="flex-1 text-sm text-zinc-300">{getName(c)}</span>
+              <select
+                value={assignments[c.id] ?? ""}
+                onChange={(e) => setAssignments((prev) => ({ ...prev, [c.id]: parseInt(e.target.value, 10) }))}
+                className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-white focus:border-amber-500 focus:outline-none touch-manipulation">
+                <option value="">—</option>
+                {[1, 2, 3, 4, 5, 6].map((t) => (
+                  <option key={t} value={t}>T{t}{t === 6 ? " (solo)" : ""}</option>
+                ))}
+              </select>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Suggested pairs */}
-      <div className="mb-4 rounded-xl border border-zinc-800 overflow-hidden">
-        <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800">
-          <span className="text-xs font-semibold text-zinc-300">Auto-suggested teams (#1+#10, #2+#9, etc.)</span>
-        </div>
-        <div className="divide-y divide-zinc-800/40">
-          {pairs.map(([a, b], i) => {
-            const existing = existingPlayers.filter((p) => p.team_number === i + 1);
-            return (
-              <div key={i} className="flex items-center gap-3 px-4 py-2">
-                <span className="w-16 text-xs font-semibold text-amber-500">Team {i + 1}</span>
-                <span className="text-sm text-zinc-300">{getName(a)}</span>
-                <span className="text-zinc-600">+</span>
-                <span className="text-sm text-zinc-300">{getName(b)}</span>
-                {i + 1 === eleventhTeam && (
-                  <span className="text-xs text-amber-500 ml-auto">← #{11} joins here</span>
-                )}
-              </div>
-            );
-          })}
-          {eleventh && (
-            <div className="flex items-center gap-2 px-4 py-2 bg-amber-950/20">
-              <span className="w-16 text-xs font-semibold text-zinc-500">#11</span>
-              <span className="text-sm font-semibold text-amber-400">{getName(eleventh)}</span>
-              <span className="text-xs text-zinc-500">picks their team →</span>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* #11 assignment */}
-      {eleventh && (
-        <div className="mb-4 rounded-xl border border-amber-900/50 bg-amber-950/20 p-4">
-          <p className="text-sm font-semibold text-amber-300 mb-3">
-            {getName(eleventh)} (#{11}) joins which team?
-          </p>
-          <div className="flex flex-wrap gap-2 mb-3">
-            {pairs.map(([a, b], i) => (
-              <button key={i}
-                onClick={() => { setEleventhTeam(i + 1); setEleventhPlaysWith(a.id); }}
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${eleventhTeam === i + 1 ? "bg-amber-500 text-black" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}>
-                Team {i + 1}: {getName(a)} + {getName(b)}
-              </button>
-            ))}
-          </div>
-          {chosenPair && (
-            <>
-              <p className="text-xs text-zinc-400 mb-2">
-                {getName(eleventh)} plays WITH:
-              </p>
-              <div className="flex gap-2 mb-3">
-                {chosenPair.map((c) => (
-                  <button key={c.id}
-                    onClick={() => setEleventhPlaysWith(c.id)}
-                    className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${eleventhPlaysWith === c.id ? "bg-green-600 text-white" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}>
-                    {getName(c)}
-                  </button>
-                ))}
-              </div>
-              {displacedName && (
-                <p className="text-xs text-zinc-500">
-                  Displaced (1 point): <span className="text-orange-400 font-semibold">{getName(displacedName)}</span>
-                </p>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      <button onClick={handleSave} disabled={saving || !eleventh}
-        className="w-full rounded-lg bg-amber-500 py-2.5 font-semibold text-black hover:bg-amber-400 disabled:opacity-40">
-        {saving ? "Saving…" : hasTeams ? "Update Teams" : "Save Teams"}
+      <button onClick={handleSave} disabled={saving}
+        className="w-full rounded-lg bg-amber-500 py-2.5 font-semibold text-black hover:bg-amber-400 disabled:opacity-40 touch-manipulation"
+        style={{ WebkitTapHighlightColor: "transparent" }}>
+        {saving ? "Saving…" : "Save Teams"}
       </button>
-
-      {hasTeams && (
-        <div className="mt-4 rounded-lg border border-zinc-800 p-3">
-          <p className="text-xs font-semibold text-zinc-400 mb-2">Current team assignments</p>
-          <div className="grid gap-1 text-xs text-zinc-400">
-            {[1, 2, 3, 4, 5].map((t) => {
-              const members = existingPlayers.filter((p) => p.team_number === t);
-              return (
-                <div key={t} className="flex gap-2">
-                  <span className="font-semibold text-amber-500 w-14">Team {t}</span>
-                  {members.map((p) => {
-                    const c = data.contestants.find((x) => x.id === p.contestant_id);
-                    return c ? (
-                      <span key={p.id} className={p.is_displaced ? "text-zinc-600 line-through" : "text-zinc-300"}>
-                        {getName(c)}{p.is_displaced ? " (out)" : ""}
-                      </span>
-                    ) : null;
-                  })}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -528,7 +663,7 @@ function TiebreakersSetup({ game, data, ranks, onMutate }: {
           <div key={teamNum} className={`rounded-xl border p-4 ${existing?.tiebreak_winner_id ? "border-green-800 bg-green-950/20" : "border-zinc-800"}`}>
             <div className="flex items-center gap-2 mb-3">
               <span className="text-xs font-bold text-amber-500">Team {teamNum}</span>
-              <span className="text-xs text-zinc-400">→ {rank === 1 ? "1st" : rank === 2 ? "2nd" : rank === 3 ? "3rd" : rank === 4 ? "4th" : "5th"} place</span>
+              <span className="text-xs text-zinc-400">→ {rank === 1 ? "1st" : rank === 2 ? "2nd" : rank === 3 ? "3rd" : rank === 4 ? "4th" : rank === 5 ? "5th" : "6th"} place</span>
               <span className="text-xs text-zinc-500 ml-auto">Winner: {highPts}pts · Loser: {lowPts}pts</span>
             </div>
             <div className="flex gap-3">
@@ -605,20 +740,26 @@ function PoppKoppenRankings({ game, data, onMutate }: { game: BLGame; data: Fetc
     const c = data.contestants.find((x) => x.id === id);
     return c ? (c.nickname ?? c.full_name.split(" ")[0]) : "?";
   };
-  const ORDINALS = ["", "1st", "2nd", "3rd", "4th", "5th"];
+  const ORDINALS = ["", "1st", "2nd", "3rd", "4th", "5th", "6th"];
+
+  // Show all teams that have at least 1 member assigned
+  const activeTeams = [1, 2, 3, 4, 5, 6].filter((t) => gamePlayers.some((p) => p.team_number === t));
 
   return (
     <div className="space-y-2">
       <p className="text-xs text-zinc-500 mb-3">Assign a finishing rank to each team after they complete Popp Koppen.</p>
-      {[1, 2, 3, 4, 5].map((teamNum) => {
-        const members = gamePlayers.filter((p) => p.team_number === teamNum && !p.is_displaced);
+      {activeTeams.map((teamNum) => {
+        const members = gamePlayers.filter((p) => p.team_number === teamNum);
         const existing = gameRankings.find((r) => r.team_number === teamNum);
         const rank = rankDraft[teamNum] ?? "";
+        const isSolo = members.length === 1;
 
         return (
           <div key={teamNum} className="rounded-lg border border-zinc-800 px-4 py-3">
             <div className="flex items-center justify-between mb-2.5">
-              <span className="text-xs font-semibold text-amber-500">Team {teamNum}</span>
+              <span className="text-xs font-semibold text-amber-500">
+                Team {teamNum}{isSolo ? " (solo)" : ""}
+              </span>
               <span className="text-sm text-zinc-300">{members.map((m) => getName(m.contestant_id)).join(" + ")}</span>
             </div>
             <div className="flex items-center gap-2">
@@ -627,7 +768,7 @@ function PoppKoppenRankings({ game, data, onMutate }: { game: BLGame; data: Fetc
                 onChange={(e) => setRankDraft((prev) => ({ ...prev, [teamNum]: e.target.value }))}
                 className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none touch-manipulation">
                 <option value="">— rank —</option>
-                {[1, 2, 3, 4, 5].map((r) => <option key={r} value={r.toString()}>{ORDINALS[r]}</option>)}
+                {[1, 2, 3, 4, 5, 6].map((r) => <option key={r} value={r.toString()}>{ORDINALS[r]}</option>)}
               </select>
               <button
                 onClick={async () => {
@@ -686,17 +827,18 @@ function ChessboardLeague({ game, data, onMutate }: { game: BLGame; data: FetchA
   }
 
   const getTeamMembers = (teamNum: number) =>
-    gamePlayers.filter((p) => p.team_number === teamNum && !p.is_displaced);
+    gamePlayers.filter((p) => p.team_number === teamNum);
   const getName = (id: string) => {
     const c = data.contestants.find((x) => x.id === id);
     return c ? (c.nickname ?? c.full_name.split(" ")[0]) : "?";
   };
 
-  // League standings with points + goal diff
+  // League standings with points + goal diff (6 teams)
   const ranksMap = computeChessboardTeamRanks(game.id, data.chessboardMatches);
-  const pts = new Map([1, 2, 3, 4, 5].map((t) => [t, 0]));
-  const gf  = new Map([1, 2, 3, 4, 5].map((t) => [t, 0]));
-  const ga  = new Map([1, 2, 3, 4, 5].map((t) => [t, 0]));
+  const activeTeamNums = [1, 2, 3, 4, 5, 6].filter((t) => gamePlayers.some((p) => p.team_number === t));
+  const pts = new Map(activeTeamNums.map((t) => [t, 0]));
+  const gf  = new Map(activeTeamNums.map((t) => [t, 0]));
+  const ga  = new Map(activeTeamNums.map((t) => [t, 0]));
   for (const m of matches.filter((m) => m.winner_team !== null)) {
     const sa = m.score_a ?? 0, sb = m.score_b ?? 0;
     gf.set(m.team_a, (gf.get(m.team_a) ?? 0) + sa);
@@ -715,7 +857,7 @@ function ChessboardLeague({ game, data, onMutate }: { game: BLGame; data: FetchA
       {played > 0 && (
         <div className="mb-5 rounded-xl border border-zinc-800 overflow-hidden">
           <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800">
-            <span className="text-xs font-semibold text-zinc-300">League standings ({played}/10 played)</span>
+            <span className="text-xs font-semibold text-zinc-300">League standings ({played}/{CHESS_PAIRS.length} played)</span>
           </div>
           <table className="w-full text-xs">
             <thead>
@@ -1097,7 +1239,7 @@ function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAll
                         <span className="w-24 text-sm text-zinc-300 truncate">{getName(g.contestant_id)}</span>
                         <input
                           defaultValue={g.time_seconds !== null ? formatTime(g.time_seconds) : ""}
-                          placeholder="e.g. 45.32" inputMode="decimal"
+                          placeholder="e.g. 45.321" inputMode="decimal"
                           className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none tabular-nums"
                           onBlur={async (e) => {
                             const secs = parseTime(e.target.value);

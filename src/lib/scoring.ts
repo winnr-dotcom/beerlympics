@@ -249,9 +249,9 @@ export function computeCupGameResults(
 }
 
 // ── Team game scoring ──────────────────────────────────────────
-
-function teamHighPts(rank: number) { return 13 - 2 * rank; }
-function teamLowPts(rank: number)  { return 12 - 2 * rank; }
+// Supports mixed teams: pair teams consume 2 position slots, solo teams consume 1.
+// Teams are sorted by rank, then positions are assigned sequentially so totals
+// always sum to positions 1–11 regardless of where the solo team finishes.
 
 export function computeTeamGameResults(
   gameId: string,
@@ -260,7 +260,9 @@ export function computeTeamGameResults(
   teamRankings: TeamGameRanking[],
 ): Record<string, GameResult> {
   const gamePlayers = teamPlayers.filter((p) => p.game_id === gameId);
-  const gameRankings = teamRankings.filter((r) => r.game_id === gameId && r.rank !== null);
+  const gameRankings = teamRankings
+    .filter((r) => r.game_id === gameId && r.rank !== null)
+    .sort((a, b) => a.rank! - b.rank!);
   const out: Record<string, GameResult> = {};
 
   if (gamePlayers.length === 0) {
@@ -268,33 +270,31 @@ export function computeTeamGameResults(
     return out;
   }
 
-  const displaced = gamePlayers.find((p) => p.is_displaced);
-  if (displaced) {
-    out[displaced.contestant_id] = { points: 1, isProvisional: false, rank: 11 };
-  }
-
+  let position = 1;
   for (const ranking of gameRankings) {
-    const members = gamePlayers.filter((p) => p.team_number === ranking.team_number && !p.is_displaced);
-    if (members.length < 2) continue;
+    const members = gamePlayers.filter((p) => p.team_number === ranking.team_number);
+    if (members.length === 0) continue;
 
-    const high = teamHighPts(ranking.rank!);
-    const low  = teamLowPts(ranking.rank!);
-    const highRank = (ranking.rank! - 1) * 2 + 1;
-    const lowRank  = (ranking.rank! - 1) * 2 + 2;
-
-    if (ranking.tiebreak_winner_id) {
-      for (const p of members) {
-        const isWinner = p.contestant_id === ranking.tiebreak_winner_id;
-        out[p.contestant_id] = { points: isWinner ? high : low, isProvisional: false, rank: isWinner ? highRank : lowRank };
-      }
+    if (members.length === 1) {
+      out[members[0].contestant_id] = { points: POINTS[position] ?? 0, isProvisional: false, rank: position };
+      position += 1;
     } else {
-      for (const p of members) {
-        out[p.contestant_id] = { points: low, isProvisional: true, rank: highRank };
+      const highPts = POINTS[position] ?? 0;
+      const lowPts  = POINTS[position + 1] ?? 0;
+      if (ranking.tiebreak_winner_id) {
+        for (const p of members) {
+          const isWinner = p.contestant_id === ranking.tiebreak_winner_id;
+          out[p.contestant_id] = { points: isWinner ? highPts : lowPts, isProvisional: false, rank: isWinner ? position : position + 1 };
+        }
+      } else {
+        for (const p of members) {
+          out[p.contestant_id] = { points: lowPts, isProvisional: true, rank: position };
+        }
       }
+      position += 2;
     }
   }
 
-  const rankedTeams = new Set(gameRankings.map((r) => r.team_number));
   for (const p of gamePlayers) {
     if (!out[p.contestant_id]) out[p.contestant_id] = { points: null, isProvisional: false, rank: null };
   }
@@ -313,9 +313,9 @@ export function computeChessboardTeamRanks(
 ): Map<number, number> {
   const gameMatches = matches.filter((m) => m.game_id === gameId && m.winner_team !== null);
 
-  const pts   = new Map<number, number>([1, 2, 3, 4, 5].map((t) => [t, 0]));
-  const gf    = new Map<number, number>([1, 2, 3, 4, 5].map((t) => [t, 0])); // goals for
-  const ga    = new Map<number, number>([1, 2, 3, 4, 5].map((t) => [t, 0])); // goals against
+  const pts   = new Map<number, number>([1, 2, 3, 4, 5, 6].map((t) => [t, 0]));
+  const gf    = new Map<number, number>([1, 2, 3, 4, 5, 6].map((t) => [t, 0]));
+  const ga    = new Map<number, number>([1, 2, 3, 4, 5, 6].map((t) => [t, 0]));
 
   for (const m of gameMatches) {
     const sa = m.score_a ?? 0, sb = m.score_b ?? 0;
@@ -478,7 +478,7 @@ export function getLivesBrackets(gameId: string, livesStates: LivesGameState[]) 
 
 export function formatTime(seconds: number): string {
   const mins = Math.floor(seconds / 60);
-  const secs = (seconds % 60).toFixed(2).padStart(5, "0");
+  const secs = (seconds % 60).toFixed(3).padStart(6, "0");
   return mins > 0 ? `${mins}:${secs}` : `${secs}s`;
 }
 
@@ -493,10 +493,11 @@ export function parseTime(raw: string): number | null {
   return isNaN(v) ? null : v;
 }
 
-// All 10 round-robin pairs for 5 teams
+// All 15 round-robin pairs for 6 teams
 export const CHESS_PAIRS: [number, number][] = [
-  [1, 2], [1, 3], [1, 4], [1, 5],
-  [2, 3], [2, 4], [2, 5],
-  [3, 4], [3, 5],
-  [4, 5],
+  [1, 2], [1, 3], [1, 4], [1, 5], [1, 6],
+  [2, 3], [2, 4], [2, 5], [2, 6],
+  [3, 4], [3, 5], [3, 6],
+  [4, 5], [4, 6],
+  [5, 6],
 ];
