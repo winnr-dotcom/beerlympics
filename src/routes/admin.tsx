@@ -194,86 +194,136 @@ function IndividualTimesPanel({ game, data, onMutate }: { game: BLGame; data: Fe
   const r1ForGame = data.round1.filter((r) => r.game_id === game.id);
   const r2ForGame = data.round2.filter((r) => r.game_id === game.id);
   const { bracketA, bracketB } = getBrackets(game.id, data.round1);
-  const hasBrackets = !isRace && bracketA.length >= 6;
+  const allR1Done = !isRace && r1ForGame.length >= data.contestants.length;
+
+  const [r1Drafts, setR1Drafts] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const c of data.contestants) {
+      const ex = r1ForGame.find((r) => r.contestant_id === c.id)?.time_seconds ?? null;
+      init[c.id] = ex !== null ? formatTime(ex) : "";
+    }
+    return init;
+  });
+  const [saving, setSaving] = useState(false);
+
+  async function handleSaveAll() {
+    const entries = data.contestants
+      .map((c) => ({ c, secs: parseTime(r1Drafts[c.id] ?? "") }))
+      .filter((e): e is { c: Contestant; secs: number } => e.secs !== null && e.secs > 0);
+    if (entries.length === 0) { toast.error("No valid times to save"); return; }
+    setSaving(true);
+    await Promise.all(entries.map(({ c, secs }) => upsertRound1(c.id, game.id, secs)));
+    setSaving(false);
+    toast.success(`Saved ${entries.length} R1 times`);
+    onMutate();
+  }
+
+  async function handleResetAll() {
+    if (!confirm("Clear all times for this game?")) return;
+    setSaving(true);
+    await Promise.all([
+      ...r1ForGame.map((r) => deleteRound1(r.contestant_id, game.id)),
+      ...r2ForGame.map((r) => deleteRound2(r.contestant_id, game.id)),
+    ]);
+    setR1Drafts(() => {
+      const m: Record<string, string> = {};
+      for (const c of data.contestants) m[c.id] = "";
+      return m;
+    });
+    setSaving(false);
+    toast.success("Times cleared");
+    onMutate();
+  }
 
   return (
     <>
       <div className="mb-5 rounded-xl border border-zinc-800 overflow-hidden">
-        <div className="bg-zinc-900/70 px-4 py-3 border-b border-zinc-800 flex items-center justify-between gap-2">
+        <div className="bg-zinc-900/70 px-4 py-3 border-b border-zinc-800 flex items-center justify-between gap-3">
           <div>
             <h3 className="font-semibold text-zinc-200">Round 1 — All contestants</h3>
             <p className="text-xs text-zinc-500 mt-0.5">Seconds (e.g. 45.321) or mm:ss.ms (e.g. 1:23.456)</p>
           </div>
-          <button
-            onClick={async () => {
-              if (!confirm("Clear all times for this game?")) return;
-              await Promise.all([
-                ...r1ForGame.map((r) => deleteRound1(r.contestant_id, game.id)),
-                ...r2ForGame.map((r) => deleteRound2(r.contestant_id, game.id)),
-              ]);
-              onMutate();
-              toast.success("Times cleared");
-            }}
-            className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-500 hover:text-red-400 shrink-0 touch-manipulation">
-            Reset
-          </button>
+          <div className="flex gap-2 shrink-0">
+            <button onClick={handleResetAll} disabled={saving}
+              className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-500 hover:text-red-400 touch-manipulation">
+              Reset
+            </button>
+            <button onClick={handleSaveAll} disabled={saving}
+              className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black hover:bg-amber-400 disabled:opacity-50 touch-manipulation"
+              style={{ WebkitTapHighlightColor: "transparent" }}>
+              {saving ? "…" : "Save All"}
+            </button>
+          </div>
         </div>
         <div className="divide-y divide-zinc-800/50">
-          {data.contestants.map((c) => (
-            <TimeRow key={c.id} contestant={c} gameId={game.id} round="r1"
-              existing={r1ForGame.find((r) => r.contestant_id === c.id)?.time_seconds ?? null}
-              bracket={hasBrackets ? (bracketA.includes(c.id) ? "A" : "B") : null}
-              onSave={async (secs) => {
-                const { error } = await upsertRound1(c.id, game.id, secs);
-                if (error) { toast.error("Save failed"); return; }
-                toast.success(`R1 saved — ${c.nickname ?? c.full_name.split(" ")[0]}`);
-                onMutate();
-              }}
-              onDelete={async () => { await deleteRound1(c.id, game.id); onMutate(); }}
-            />
-          ))}
+          {data.contestants.map((c) => {
+            const saved = r1ForGame.find((r) => r.contestant_id === c.id)?.time_seconds ?? null;
+            const cur = r1Drafts[c.id] ?? "";
+            const bracket = allR1Done ? (bracketA.includes(c.id) ? "A" : "B") : null;
+            const name = c.nickname ?? c.full_name.split(" ")[0];
+            return (
+              <div key={c.id} className="flex items-center gap-2 px-4 py-2.5 hover:bg-zinc-800/20">
+                {bracket && (
+                  <span className={`text-xs font-bold w-4 shrink-0 ${bracket === "A" ? "text-green-400" : "text-zinc-500"}`}>{bracket}</span>
+                )}
+                <span className="w-24 text-sm text-zinc-300 truncate shrink-0">{name}</span>
+                <input
+                  value={cur}
+                  onChange={(e) => setR1Drafts((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                  placeholder="e.g. 45.321"
+                  inputMode="decimal"
+                  className="flex-1 min-w-0 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white placeholder-zinc-600 focus:border-amber-500 focus:outline-none tabular-nums"
+                />
+                {saved !== null && (
+                  <span className="text-xs text-zinc-500 shrink-0 tabular-nums">{formatTime(saved)}</span>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {hasBrackets && (
+      {!isRace && (
         <div className="rounded-xl border border-zinc-800 overflow-hidden">
           <div className="bg-zinc-900/70 px-4 py-3 border-b border-zinc-800">
             <h3 className="font-semibold text-zinc-200">Round 2 — Playoffs</h3>
-            <p className="text-xs text-zinc-500 mt-0.5">A bracket → positions 1–6 · B bracket → positions 7–11</p>
+            <p className="text-xs text-zinc-500 mt-0.5">Bracket A → positions 1–6 · Bracket B → positions 7–{data.contestants.length}</p>
           </div>
-          <div className="p-4 grid gap-4 sm:grid-cols-2">
-            {[{ ids: bracketA, label: "🏆 Bracket A (Top 6)", color: "text-green-400" },
-              { ids: bracketB, label: "Bracket B (Bottom 5)", color: "text-zinc-400" }].map(({ ids, label, color }) => (
-              <div key={label}>
-                <div className={`mb-2 text-xs font-semibold uppercase tracking-wide ${color}`}>{label}</div>
-                <div className="space-y-0.5">
-                  {ids.map((cid) => {
-                    const c = data.contestants.find((x) => x.id === cid)!;
-                    return (
-                      <TimeRow key={cid} contestant={c} gameId={game.id} round="r2"
-                        existing={r2ForGame.find((r) => r.contestant_id === cid)?.time_seconds ?? null}
-                        bracket={ids === bracketA ? "A" : "B"}
-                        onSave={async (secs) => {
-                          const { error } = await upsertRound2(c.id, game.id, secs);
-                          if (error) { toast.error("Save failed"); return; }
-                          toast.success(`R2 saved — ${c.nickname ?? c.full_name.split(" ")[0]}`);
-                          onMutate();
-                        }}
-                        onDelete={async () => { await deleteRound2(c.id, game.id); onMutate(); }}
-                      />
-                    );
-                  })}
+          {!allR1Done ? (
+            <p className="text-xs text-zinc-600 text-center py-6">
+              Enter all {data.contestants.length} Round 1 times to unlock playoff brackets
+            </p>
+          ) : (
+            <div className="p-4 grid gap-4 sm:grid-cols-2">
+              {([
+                { ids: bracketA, label: "🏆 Bracket A (Top 6)", color: "text-green-400" },
+                { ids: bracketB, label: "Bracket B (Bottom 5)", color: "text-zinc-400" },
+              ] as const).map(({ ids, label, color }) => (
+                <div key={label}>
+                  <div className={`mb-2 text-xs font-semibold uppercase tracking-wide ${color}`}>{label}</div>
+                  <div className="space-y-0.5">
+                    {ids.map((cid) => {
+                      const c = data.contestants.find((x) => x.id === cid)!;
+                      return (
+                        <TimeRow key={cid} contestant={c} gameId={game.id} round="r2"
+                          existing={r2ForGame.find((r) => r.contestant_id === cid)?.time_seconds ?? null}
+                          bracket={ids === bracketA ? "A" : "B"}
+                          onSave={async (secs) => {
+                            const { error } = await upsertRound2(c.id, game.id, secs);
+                            if (error) { toast.error("Save failed"); return; }
+                            toast.success(`R2 saved — ${c.nickname ?? c.full_name.split(" ")[0]}`);
+                            onMutate();
+                          }}
+                          onDelete={async () => { await deleteRound2(c.id, game.id); onMutate(); }}
+                        />
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
-      )}
-
-      {!isRace && !hasBrackets && (
-        <p className="text-xs text-zinc-600 text-center py-3">
-          Enter all 11 Round 1 times to unlock playoff brackets
-        </p>
       )}
     </>
   );
