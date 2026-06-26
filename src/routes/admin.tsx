@@ -19,8 +19,9 @@ import {
   resetRound2ForGame,
   resetChessboardGame,
   upsertCrockGroup,
-  saveCrockAssignments,
-  saveCrockR2Assignments,
+  assignToR1Group,
+  assignToR2Group,
+  removeFromCrockGroup,
   upsertCrockFinal,
   deleteCrockFinal,
   resetCrockGame,
@@ -1252,132 +1253,216 @@ function CrockFinalRow({
 }
 
 function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
-  const [subTab, setSubTab] = useState<"r1" | "r2" | "finals">("r1");
-  const r1Groups = data.crockGroups.filter((g) => g.game_id === game.id && g.stage === "r1");
-  const r2Groups = data.crockGroups.filter((g) => g.game_id === game.id && g.stage === "r2");
-  const gameFinals = data.crockFinals.filter((f) => f.game_id === game.id);
+  const [picker, setPicker] = useState<{ stage: "r1" | "r2"; group: number } | null>(null);
 
-  const getName = (id: string) => {
-    const c = data.contestants.find((x) => x.id === id);
-    return c ? (c.nickname ?? c.full_name.split(" ")[0]) : "?";
+  const r1 = data.crockGroups.filter(g => g.game_id === game.id && g.stage === "r1");
+  const r2 = data.crockGroups.filter(g => g.game_id === game.id && g.stage === "r2");
+  const finals = data.crockFinals.filter(f => f.game_id === game.id);
+  const getName = (id: string) => { const c = data.contestants.find(x => x.id === id); return c ? (c.nickname ?? c.full_name.split(" ")[0]) : "?"; };
+
+  const r1g = (gn: number) => r1.filter(g => g.group_number === gn);
+  const r2g = (gn: number) => r2.filter(g => g.group_number === gn);
+
+  // ── R1 qualifiers ──────────────────────────────────────────
+  const r1QualIds = new Set<string>();
+  for (const gn of [1, 2, 3, 4]) {
+    const sorted = r1g(gn).filter(m => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
+    sorted.slice(0, 2).forEach(m => r1QualIds.add(m.contestant_id));
+  }
+  for (const g of r1) {
+    if (g.advances === true) r1QualIds.add(g.contestant_id);
+    if (g.advances === false) r1QualIds.delete(g.contestant_id);
+  }
+  const r1NonQualIds = [...new Set(r1.map(g => g.contestant_id))].filter(id => !r1QualIds.has(id));
+
+  // Wildcard: best 3rd from A/B/C
+  const abThirds: typeof r1 = [];
+  for (const gn of [1, 2, 3]) {
+    const s = r1g(gn).filter(m => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
+    if (s[2]) abThirds.push(s[2]);
+  }
+  const wc = abThirds.length > 0 ? abThirds.sort((a, b) => a.time_seconds! - b.time_seconds!)[0] : null;
+  const wcInD = wc ? r1.find(g => g.contestant_id === wc.contestant_id && g.group_number === 4) : null;
+
+  // ── R2 qualifiers ──────────────────────────────────────────
+  const r2FinalIds = new Set<string>();
+  const r2ConsolIds = new Set<string>();
+  for (const gn of [1, 2]) {
+    const sorted = r2g(gn).filter(m => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
+    sorted.slice(0, 2).forEach(m => r2FinalIds.add(m.contestant_id));
+    sorted.slice(2).forEach(m => r2ConsolIds.add(m.contestant_id));
+  }
+
+  // Available players for pickers
+  const r1AllAssigned = new Set(r1.map(g => g.contestant_id));
+  const availForR1 = data.contestants.filter(c => !r1AllAssigned.has(c.id));
+  const r2Assigned = new Set(r2.map(g => g.contestant_id));
+  const availForR2 = [...r1QualIds].filter(id => !r2Assigned.has(id));
+
+  // ── Slot renderer ──────────────────────────────────────────
+  const renderSlot = (
+    member: typeof r1[0] | undefined,
+    key: string,
+    stage: "r1" | "r2",
+    groupNum: number,
+    maxRank: number,
+    qualBadge: string,
+    isWcSlot?: boolean,
+  ) => {
+    if (!member) {
+      return (
+        <button key={key} type="button"
+          onClick={() => !isWcSlot && setPicker({ stage, group: groupNum })}
+          disabled={isWcSlot}
+          className={`w-full py-3 rounded-lg border-2 border-dashed text-xs font-medium transition-colors touch-manipulation select-none
+            ${isWcSlot ? "border-amber-900/30 text-amber-900/40 cursor-default" : "border-zinc-800 text-zinc-700 hover:border-zinc-600 hover:text-zinc-400 cursor-pointer"}`}
+          style={{ WebkitTapHighlightColor: "transparent" }}>
+          {isWcSlot ? "🃏 WC — auto after A/B/C" : "+ Assign"}
+        </button>
+      );
+    }
+    const sortedGroup = (stage === "r1" ? r1g(groupNum) : r2g(groupNum))
+      .filter(m => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
+    const rank = sortedGroup.findIndex(m => m.contestant_id === member.contestant_id);
+    const isQ = rank >= 0 && rank < maxRank && member.time_seconds !== null;
+    const isWc = member.contestant_id === wc?.contestant_id && groupNum === 4;
+    return (
+      <div key={key} className={`rounded-lg border p-2 ${isQ ? "border-green-800/40 bg-green-950/10" : "border-zinc-800"}`}>
+        <div className="flex items-center gap-1 mb-1.5">
+          {isQ && <span className="text-[10px] font-bold text-green-400 w-3 shrink-0">{rank + 1}.</span>}
+          <span className={`flex-1 text-xs font-medium truncate ${isQ ? "text-white" : "text-zinc-300"}`}>
+            {getName(member.contestant_id)}{isWc && <span className="text-amber-400 ml-0.5 text-[10px]">★</span>}
+          </span>
+          {isQ && <span className="text-[10px] text-green-400 shrink-0">{qualBadge}</span>}
+          <button type="button"
+            onClick={async () => { await removeFromCrockGroup(game.id, member.contestant_id, groupNum, stage); onMutate(); }}
+            className="ml-0.5 text-zinc-700 hover:text-red-400 text-xs w-4 h-4 flex items-center justify-center shrink-0 touch-manipulation">
+            ×
+          </button>
+        </div>
+        <input
+          key={`${member.id}-${member.time_seconds ?? "x"}`}
+          defaultValue={member.time_seconds !== null ? formatTime(member.time_seconds) : ""}
+          placeholder="0:00.000" inputMode="decimal"
+          className="w-full rounded bg-zinc-900 px-2 py-1.5 text-xs font-mono text-zinc-200 border border-zinc-800 focus:outline-none focus:border-amber-500"
+          onBlur={async e => {
+            const t = parseTime(e.target.value);
+            if (t === null) return;
+            await upsertCrockGroup(game.id, member.contestant_id, groupNum, t, member.advances, stage);
+            onMutate();
+          }}
+          onKeyDown={e => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+        />
+      </div>
+    );
   };
 
-  // ── R1 qualifier logic ────────────────────────────────────────
-  const r1Grouped = new Map<number, typeof r1Groups>();
-  for (const g of r1Groups) {
-    if (!r1Grouped.has(g.group_number)) r1Grouped.set(g.group_number, []);
-    r1Grouped.get(g.group_number)!.push(g);
-  }
-  const r1Qualifiers = new Set<string>();
-  for (const [, members] of r1Grouped) {
-    const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
-    sorted.slice(0, 2).forEach((m) => r1Qualifiers.add(m.contestant_id));
-  }
-  for (const g of r1Groups) {
-    if (g.advances === true) r1Qualifiers.add(g.contestant_id);
-    if (g.advances === false) r1Qualifiers.delete(g.contestant_id);
-  }
-  // Unique players seen in R1 (wildcard may appear in two groups)
-  const r1Seen = new Set(r1Groups.map((g) => g.contestant_id));
-  const r1NonQualifiers = [...r1Seen].filter((id) => !r1Qualifiers.has(id));
+  const renderR1Group = (gn: number) => {
+    const label = ["A", "B", "C", "D"][gn - 1];
+    const isD = gn === 4;
+    const members = r1g(gn);
+    const regularMembers = isD ? members.filter(m => m.contestant_id !== wc?.contestant_id) : members;
+    const regularSlots = isD ? 2 : 3;
+    return (
+      <div key={gn} className={`rounded-xl border overflow-hidden ${isD ? "border-amber-900/40" : "border-zinc-800"}`}>
+        <div className={`px-3 py-2 border-b text-xs font-bold flex items-center justify-between
+          ${isD ? "border-amber-900/40 bg-amber-950/20 text-amber-400" : "border-zinc-800 bg-zinc-900/50 text-zinc-300"}`}>
+          <span>Group {label}</span>
+          <span className="text-zinc-600 font-normal text-[10px]">top 2 →</span>
+        </div>
+        <div className="p-2 space-y-1.5">
+          {Array.from({ length: regularSlots }).map((_, i) =>
+            renderSlot(regularMembers[i], `r1-${gn}-${i}`, "r1", gn, 2, "→R2")
+          )}
+          {isD && (
+            wcInD
+              ? renderSlot(wcInD, "r1-4-wc", "r1", 4, 2, "→R2")
+              : wc && !wcInD
+                ? <button type="button" onClick={async () => { await assignToR1Group(game.id, wc.contestant_id, 4); onMutate(); }}
+                    className="w-full py-2.5 rounded-lg border border-amber-800/50 bg-amber-950/20 text-xs text-amber-400 hover:bg-amber-950/50 touch-manipulation"
+                    style={{ WebkitTapHighlightColor: "transparent" }}>
+                    🃏 {getName(wc.contestant_id)} ({formatTime(wc.time_seconds!)})
+                  </button>
+                : renderSlot(undefined, "r1-4-wc", "r1", 4, 2, "→R2", true)
+          )}
+        </div>
+      </div>
+    );
+  };
 
-  // Wildcard: best 3rd from groups A(1), B(2), and C(3)
-  const abThirds: typeof r1Groups = [];
-  for (const gn of [1, 2, 3]) {
-    const members = r1Grouped.get(gn) ?? [];
-    const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
-    if (sorted[2]) abThirds.push(sorted[2]);
-  }
-  const wildcardEntry = abThirds.length > 0
-    ? abThirds.sort((a, b) => a.time_seconds! - b.time_seconds!)[0]
-    : null;
-  const wildcardInD = wildcardEntry
-    ? r1Groups.find((g) => g.contestant_id === wildcardEntry.contestant_id && g.group_number === 4)
-    : null;
-
-  // R1 unassigned (not in any R1 group)
-  const r1AssignedIds = new Set(r1Groups.map((g) => g.contestant_id));
-  const unassigned = data.contestants.filter((c) => !r1AssignedIds.has(c.id));
-
-  // ── R2 qualifier logic ────────────────────────────────────────
-  const r2Grouped = new Map<number, typeof r2Groups>();
-  for (const g of r2Groups) {
-    if (!r2Grouped.has(g.group_number)) r2Grouped.set(g.group_number, []);
-    r2Grouped.get(g.group_number)!.push(g);
-  }
-  const r2FinalQuals = new Set<string>();
-  const r2ConsolQuals = new Set<string>();
-  for (const [, members] of r2Grouped) {
-    const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
-    sorted.slice(0, 2).forEach((m) => r2FinalQuals.add(m.contestant_id));
-    sorted.slice(2).forEach((m) => r2ConsolQuals.add(m.contestant_id));
-  }
-
-  // Players already assigned to R2 groups
-  const r2AssignedIds = new Set(r2Groups.map((g) => g.contestant_id));
-  const r1QualUnassigned = [...r1Qualifiers].filter((id) => !r2AssignedIds.has(id));
-
-  async function handleR1Assign(contestantId: string, groupNumber: number) {
-    await upsertCrockGroup(game.id, contestantId, groupNumber, null, null, "r1");
-    onMutate();
-  }
-
-  async function handleAddWildcard() {
-    if (!wildcardEntry) return;
-    await upsertCrockGroup(game.id, wildcardEntry.contestant_id, 4, null, null, "r1");
-    onMutate();
-  }
-
-  async function handleR2Assign(contestantId: string, groupNumber: number) {
-    const existing = r2Groups.find((g) => g.contestant_id === contestantId);
-    if (existing) {
-      await upsertCrockGroup(game.id, contestantId, groupNumber, existing.time_seconds, existing.advances, "r2");
-    } else {
-      await upsertCrockGroup(game.id, contestantId, groupNumber, null, null, "r2");
-    }
-    onMutate();
-  }
-
-  async function handleReset() {
-    if (!confirm("Reset entire Crock it tournament? All times and assignments will be cleared.")) return;
-    await resetCrockGame(game.id);
-    onMutate();
-  }
+  // ── Picker modal ───────────────────────────────────────────
+  const pickerPlayers: Contestant[] = picker
+    ? picker.stage === "r1"
+      ? availForR1
+      : availForR2.map(id => data.contestants.find(c => c.id === id)!).filter(Boolean)
+    : [];
 
   return (
     <div>
-      <div className="mb-4 flex gap-2">
-        {(["r1", "r2", "finals"] as const).map((t) => (
-          <button key={t} onClick={() => setSubTab(t)}
-            className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors touch-manipulation ${subTab === t ? "bg-zinc-200 text-zinc-900" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}`}
-            style={{ WebkitTapHighlightColor: "transparent" }}>
-            {t === "r1" ? "R1 Groups" : t === "r2" ? "R2 Groups" : "Finals"}
-          </button>
-        ))}
-        <button onClick={handleReset}
-          className="rounded-lg border border-zinc-700 px-3 py-2.5 text-xs text-zinc-600 hover:text-red-400 touch-manipulation shrink-0"
+      <div className="flex justify-end mb-4">
+        <button type="button" onClick={async () => { if (!confirm("Reset entire Crock it tournament?")) return; await resetCrockGame(game.id); onMutate(); }}
+          className="rounded-lg border border-zinc-800 px-3 py-1.5 text-xs text-zinc-600 hover:text-red-400 touch-manipulation"
           style={{ WebkitTapHighlightColor: "transparent" }}>
           Reset
         </button>
       </div>
 
-      {/* ── R1 Groups tab ─────────────────────────────────────── */}
-      {subTab === "r1" && (
-        <div>
-          {/* Assign unassigned players */}
-          {unassigned.length > 0 && (
-            <div className="mb-4 rounded-xl border border-amber-900/50 bg-amber-950/20 p-4">
-              <p className="text-xs font-semibold text-amber-300 mb-1">Assign players to R1 groups</p>
-              <p className="text-xs text-zinc-500 mb-3">A, B, C: 3 players each · D: 2 players (+ wildcard from A/B/C)</p>
-              <div className="space-y-2">
-                {unassigned.map((c) => (
-                  <div key={c.id} className="flex items-center gap-2">
-                    <span className="flex-1 text-sm text-zinc-300">{getName(c.id)}</span>
-                    {[1, 2, 3, 4].map((gn) => (
-                      <button key={gn} onClick={() => handleR1Assign(c.id, gn)}
-                        className="rounded-lg bg-zinc-800 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-amber-500 hover:text-black touch-manipulation"
+      {/* ── Round 1 ── */}
+      <div className="mb-1">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Round 1</span>
+          <div className="flex-1 h-px bg-zinc-800" />
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {[1, 2, 3, 4].map(renderR1Group)}
+        </div>
+      </div>
+
+      {r1.length > 0 && (
+        <div className="my-3 flex items-center gap-2">
+          <div className="flex-1 h-px bg-zinc-800/50" />
+          <span className="text-[10px] text-zinc-600">↓ top 2 per group → Round 2</span>
+          <div className="flex-1 h-px bg-zinc-800/50" />
+        </div>
+      )}
+
+      {/* ── Round 2 ── */}
+      {r1.length > 0 && (
+        <div className="mb-1">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Round 2</span>
+            <div className="flex-1 h-px bg-zinc-800" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {[1, 2].map(gn => {
+              const members = r2g(gn);
+              return (
+                <div key={gn} className="rounded-xl border border-zinc-800 overflow-hidden">
+                  <div className="px-3 py-2 border-b border-zinc-800 bg-zinc-900/50 text-xs font-bold text-zinc-300 flex justify-between items-center">
+                    <span>Group {gn}</span>
+                    <span className="text-zinc-600 font-normal text-[10px]">top 2 →Final</span>
+                  </div>
+                  <div className="p-2 space-y-1.5">
+                    {Array.from({ length: 4 }).map((_, i) =>
+                      renderSlot(members[i], `r2-${gn}-${i}`, "r2", gn, 2, "→F")
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {availForR2.length > 0 && (
+            <div className="mt-2 rounded-xl border border-amber-900/30 bg-amber-950/10 p-3">
+              <p className="text-xs text-amber-400 mb-2 font-medium">Assign R1 qualifiers to R2 groups:</p>
+              <div className="space-y-1.5">
+                {availForR2.map(id => (
+                  <div key={id} className="flex items-center gap-2">
+                    <span className="flex-1 text-xs text-zinc-300">{getName(id)}</span>
+                    {[1, 2].map(gn => (
+                      <button key={gn} type="button" onClick={async () => { await assignToR2Group(game.id, id, gn); onMutate(); }}
+                        className="rounded px-3 py-1.5 bg-zinc-800 text-xs text-zinc-300 hover:bg-amber-500 hover:text-black touch-manipulation"
                         style={{ WebkitTapHighlightColor: "transparent" }}>
-                        {String.fromCharCode(64 + gn)}
+                        G{gn}
                       </button>
                     ))}
                   </div>
@@ -1385,246 +1470,90 @@ function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAll
               </div>
             </div>
           )}
+        </div>
+      )}
 
-          {/* Groups A, B, C, D with time entry */}
-          {[1, 2, 3, 4].map((gn) => {
-            const members = r1Groups.filter((g) => g.group_number === gn);
-            if (members.length === 0 && gn !== 4) return null;
-            const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
-            const isGroupD = gn === 4;
-            return (
-              <div key={gn} className="mb-4 rounded-xl border border-zinc-800 overflow-hidden">
-                <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800 flex items-center justify-between">
-                  <span className="text-xs font-semibold text-zinc-300">{CROCK_GROUP_LABELS[gn]}</span>
-                  <span className="text-xs text-zinc-500">{members.length} players · top 2 advance</span>
+      {r2.length > 0 && (
+        <div className="my-3 flex items-center gap-2">
+          <div className="flex-1 h-px bg-zinc-800/50" />
+          <span className="text-[10px] text-zinc-600">↓ top 2 from each R2 group → Final</span>
+          <div className="flex-1 h-px bg-zinc-800/50" />
+        </div>
+      )}
+
+      {/* ── Finals ── */}
+      {r2.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Finals</span>
+            <div className="flex-1 h-px bg-zinc-800" />
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {([ ["final","🏆 1st–4th","border-amber-900/40 bg-amber-950/20","text-amber-400",r2FinalIds],
+                 ["consol_r2","5th–8th","border-zinc-800 bg-zinc-900/50","text-zinc-400",r2ConsolIds],
+                 ["consol_r1","9th–11th","border-zinc-800 bg-zinc-900/50","text-zinc-500",new Set(r1NonQualIds)],
+               ] as const).map(([stage, label, border, color, playerSet]) => (
+              <div key={stage} className={`rounded-xl border overflow-hidden ${border}`}>
+                <div className={`px-3 py-2 border-b text-xs font-bold ${border} ${color}`}
+                  style={{ borderBottomWidth: "1px" }}>
+                  {label}
                 </div>
                 <div className="divide-y divide-zinc-800/40">
-                  {members.map((g) => {
-                    const rank = sorted.indexOf(g);
-                    const isQ = rank < 2 && g.time_seconds !== null;
-                    const isWild = g.contestant_id === wildcardEntry?.contestant_id && isGroupD;
-                    return (
-                      <div key={g.id} className="flex items-center gap-3 px-4 py-2">
-                        <span className={`text-xs w-4 font-bold ${isQ ? "text-green-400" : "text-zinc-600"}`}>
-                          {g.time_seconds !== null ? rank + 1 : "–"}
-                        </span>
-                        <span className="w-20 text-sm text-zinc-300 truncate">
-                          {getName(g.contestant_id)}
-                          {isWild && <span className="ml-1 text-amber-400 text-[10px]">★WC</span>}
-                        </span>
-                        <input
-                          defaultValue={g.time_seconds !== null ? formatTime(g.time_seconds) : ""}
-                          placeholder="45.321" inputMode="decimal"
-                          className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none tabular-nums"
-                          onBlur={async (e) => {
-                            const secs = parseTime(e.target.value);
-                            if (secs === null) return;
-                            await upsertCrockGroup(game.id, g.contestant_id, gn, secs, g.advances, "r1");
-                            onMutate();
-                          }}
-                        />
-                        {isQ && <span className="text-xs text-green-400 shrink-0">→ R2</span>}
-                      </div>
-                    );
-                  })}
+                  {playerSet.size === 0
+                    ? <p className="px-3 py-3 text-[10px] text-zinc-700 text-center">After {stage === "consol_r1" ? "R1" : "R2"}</p>
+                    : [...playerSet].map(cid => {
+                        const c = data.contestants.find(x => x.id === cid);
+                        if (!c) return null;
+                        return <CrockFinalRow key={cid} contestant={c} gameId={game.id}
+                          stage={stage as CrockFinal["stage"]}
+                          existing={finals.find(f => f.contestant_id === cid && f.stage === stage)?.time_seconds ?? null}
+                          onMutate={onMutate} />;
+                      })
+                  }
                 </div>
-                {/* Wildcard section inside Group D */}
-                {isGroupD && wildcardEntry && !wildcardInD && (
-                  <div className="px-4 py-3 border-t border-zinc-800/60 bg-amber-950/10">
-                    <p className="text-xs text-amber-300 mb-2">
-                      ★ Wildcard available: <span className="font-semibold">{getName(wildcardEntry.contestant_id)}</span>
-                      {" "}(best 3rd from A/B/C · {formatTime(wildcardEntry.time_seconds!)})
-                    </p>
-                    <button onClick={handleAddWildcard}
-                      className="rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-black hover:bg-amber-400 touch-manipulation"
-                      style={{ WebkitTapHighlightColor: "transparent" }}>
-                      Add to Group D
-                    </button>
-                  </div>
-                )}
-                {isGroupD && members.length === 0 && !wildcardEntry && (
-                  <div className="px-4 py-3 text-xs text-zinc-600">
-                    Enter Group A, B, and C times first to unlock the wildcard slot
-                  </div>
-                )}
               </div>
-            );
-          })}
-
-          {r1Groups.length > 0 && (
-            <button onClick={async () => { if (confirm("Clear R1 assignments?")) { await saveCrockAssignments(game.id, []); onMutate(); } }}
-              className="mt-2 w-full rounded-lg border border-zinc-800 py-2 text-xs text-zinc-600 hover:text-red-400 touch-manipulation">
-              Clear R1 assignments
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* ── R2 Groups tab ─────────────────────────────────────── */}
-      {subTab === "r2" && (
-        <div>
-          {r1Qualifiers.size === 0 ? (
-            <p className="text-xs text-zinc-600 text-center py-4">Complete R1 groups first to see qualifiers</p>
-          ) : (
-            <>
-              {r1QualUnassigned.length > 0 && (
-                <div className="mb-4 rounded-xl border border-amber-900/50 bg-amber-950/20 p-4">
-                  <p className="text-xs font-semibold text-amber-300 mb-3">
-                    Assign {r1Qualifiers.size} R1 qualifiers to R2 groups (4 each)
-                  </p>
-                  <div className="space-y-2">
-                    {r1QualUnassigned.map((cid) => (
-                      <div key={cid} className="flex items-center gap-2">
-                        <span className="flex-1 text-sm text-zinc-300">{getName(cid)}</span>
-                        {[1, 2].map((gn) => (
-                          <button key={gn} onClick={() => handleR2Assign(cid, gn)}
-                            className="rounded-lg bg-zinc-800 px-4 py-2 text-xs font-semibold text-zinc-300 hover:bg-amber-500 hover:text-black touch-manipulation"
-                            style={{ WebkitTapHighlightColor: "transparent" }}>
-                            R2-{gn}
-                          </button>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {[1, 2].map((gn) => {
-                const members = r2Groups.filter((g) => g.group_number === gn);
-                if (members.length === 0) return null;
-                const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
-                return (
-                  <div key={gn} className="mb-4 rounded-xl border border-zinc-800 overflow-hidden">
-                    <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800 flex items-center justify-between">
-                      <span className="text-xs font-semibold text-zinc-300">R2 Group {gn}</span>
-                      <span className="text-xs text-zinc-500">top 2 → Final · bottom 2 → Consolation</span>
-                    </div>
-                    <div className="divide-y divide-zinc-800/40">
-                      {members.map((g) => {
-                        const rank = sorted.indexOf(g);
-                        const isF = rank < 2 && g.time_seconds !== null;
-                        const isC = rank >= 2 && g.time_seconds !== null;
-                        return (
-                          <div key={g.id} className="flex items-center gap-3 px-4 py-2">
-                            <span className={`text-xs w-4 font-bold ${isF ? "text-green-400" : isC ? "text-zinc-500" : "text-zinc-700"}`}>
-                              {g.time_seconds !== null ? rank + 1 : "–"}
-                            </span>
-                            <span className="w-20 text-sm text-zinc-300 truncate">{getName(g.contestant_id)}</span>
-                            <input
-                              defaultValue={g.time_seconds !== null ? formatTime(g.time_seconds) : ""}
-                              placeholder="45.321" inputMode="decimal"
-                              className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none tabular-nums"
-                              onBlur={async (e) => {
-                                const secs = parseTime(e.target.value);
-                                if (secs === null) return;
-                                await upsertCrockGroup(game.id, g.contestant_id, gn, secs, g.advances, "r2");
-                                onMutate();
-                              }}
-                            />
-                            {isF && <span className="text-xs text-green-400 shrink-0">→ Final</span>}
-                            {isC && <span className="text-xs text-zinc-500 shrink-0">→ 5-8</span>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-
-              {r2Groups.length > 0 && (
-                <button onClick={async () => { if (confirm("Clear R2 assignments?")) { await saveCrockR2Assignments(game.id, []); onMutate(); } }}
-                  className="mt-2 w-full rounded-lg border border-zinc-800 py-2 text-xs text-zinc-600 hover:text-red-400 touch-manipulation">
-                  Clear R2 assignments
-                </button>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ── Finals tab ────────────────────────────────────────── */}
-      {subTab === "finals" && (
-        <div className="space-y-4">
-          {/* Final: positions 1-4 */}
-          {(() => {
-            const finalPlayers = [...r2FinalQuals].map((id) => data.contestants.find((c) => c.id === id)).filter(Boolean) as Contestant[];
-            const unplacedFinalPlayers = finalPlayers.length === 0 && r2Groups.length > 0 ? [] : finalPlayers;
-            const label = finalPlayers.length > 0 ? `Final — positions 1-4 (${finalPlayers.length} players)` : "Final — positions 1-4";
-            return (
-              <div className="rounded-xl border border-zinc-800 overflow-hidden">
-                <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800">
-                  <span className="text-xs font-semibold text-amber-400">🏆 {label}</span>
-                </div>
-                {r2FinalQuals.size === 0 ? (
-                  <p className="px-4 py-3 text-xs text-zinc-600">Complete R2 groups first</p>
-                ) : (
-                  <div className="divide-y divide-zinc-800/40">
-                    {[...r2FinalQuals].map((cid) => {
-                      const c = data.contestants.find((x) => x.id === cid)!;
-                      if (!c) return null;
-                      return (
-                        <CrockFinalRow key={cid} contestant={c} gameId={game.id} stage="final"
-                          existing={gameFinals.find((f) => f.contestant_id === cid && f.stage === "final")?.time_seconds ?? null}
-                          onMutate={onMutate}
-                        />
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-
-          {/* R2 Consolation: positions 5-8 */}
-          <div className="rounded-xl border border-zinc-800 overflow-hidden">
-            <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800">
-              <span className="text-xs font-semibold text-zinc-300">R2 Consolation — positions 5-8</span>
-            </div>
-            {r2ConsolQuals.size === 0 ? (
-              <p className="px-4 py-3 text-xs text-zinc-600">Complete R2 groups first</p>
-            ) : (
-              <div className="divide-y divide-zinc-800/40">
-                {[...r2ConsolQuals].map((cid) => {
-                  const c = data.contestants.find((x) => x.id === cid)!;
-                  if (!c) return null;
-                  return (
-                    <CrockFinalRow key={cid} contestant={c} gameId={game.id} stage="consol_r2"
-                      existing={gameFinals.find((f) => f.contestant_id === cid && f.stage === "consol_r2")?.time_seconds ?? null}
-                      onMutate={onMutate}
-                    />
-                  );
-                })}
-              </div>
-            )}
+            ))}
           </div>
+        </div>
+      )}
 
-          {/* R1 Consolation: positions 9-11 */}
-          <div className="rounded-xl border border-zinc-800 overflow-hidden">
-            <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800">
-              <span className="text-xs font-semibold text-zinc-500">R1 Consolation — positions 9-11</span>
+      {/* ── Player picker modal ── */}
+      {picker && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm px-3 pb-3"
+          onClick={() => setPicker(null)}>
+          <div className="w-full max-w-sm rounded-2xl border border-zinc-700 bg-zinc-950 shadow-2xl"
+            onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between rounded-t-2xl">
+              <h3 className="text-sm font-bold text-zinc-200">
+                Assign to {picker.stage === "r1" ? `Group ${"ABCD"[picker.group - 1]}` : `R2 Group ${picker.group}`}
+              </h3>
+              <button type="button" onClick={() => setPicker(null)} className="text-zinc-500 hover:text-white text-xl w-8 h-8 flex items-center justify-center">×</button>
             </div>
-            {r1NonQualifiers.length === 0 ? (
-              <p className="px-4 py-3 text-xs text-zinc-600">Complete R1 groups first</p>
-            ) : (
-              <div className="divide-y divide-zinc-800/40">
-                {r1NonQualifiers.map((cid) => {
-                  const c = data.contestants.find((x) => x.id === cid)!;
-                  if (!c) return null;
-                  return (
-                    <CrockFinalRow key={cid} contestant={c} gameId={game.id} stage="consol_r1"
-                      existing={gameFinals.find((f) => f.contestant_id === cid && f.stage === "consol_r1")?.time_seconds ?? null}
-                      onMutate={onMutate}
-                    />
-                  );
-                })}
-              </div>
-            )}
+            <div className="p-2 max-h-64 overflow-y-auto">
+              {pickerPlayers.length === 0
+                ? <p className="text-center py-8 text-sm text-zinc-600">No players available</p>
+                : pickerPlayers.map(c => (
+                    <button key={c.id} type="button"
+                      onClick={async () => {
+                        if (picker.stage === "r1") await assignToR1Group(game.id, c.id, picker.group);
+                        else await assignToR2Group(game.id, c.id, picker.group);
+                        setPicker(null);
+                        onMutate();
+                      }}
+                      className="w-full text-left px-4 py-3 rounded-xl hover:bg-zinc-800 text-sm font-medium text-zinc-200 transition-colors touch-manipulation"
+                      style={{ WebkitTapHighlightColor: "transparent" }}>
+                      {c.nickname ?? c.full_name.split(" ")[0]}
+                    </button>
+                  ))
+              }
+            </div>
           </div>
         </div>
       )}
     </div>
   );
 }
+
 
 // ──────────────────────────────────────────────────────────────
 // Bonus tab

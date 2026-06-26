@@ -233,18 +233,37 @@ export async function upsertCrockGroup(
   advances: boolean | null,
   stage: "r1" | "r2" = "r1",
 ) {
-  return supabase.from("crock_groups").upsert(
-    {
-      game_id: gameId,
-      contestant_id: contestantId,
-      group_number: groupNumber,
-      stage,
-      time_seconds: timeSeconds,
-      advances,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "game_id,contestant_id,group_number,stage" },
-  );
+  return supabase.from("crock_groups")
+    .update({ time_seconds: timeSeconds, advances, updated_at: new Date().toISOString() })
+    .eq("game_id", gameId)
+    .eq("contestant_id", contestantId)
+    .eq("group_number", groupNumber)
+    .eq("stage", stage);
+}
+
+export async function assignToR1Group(gameId: string, contestantId: string, groupNumber: number) {
+  if (groupNumber < 4) {
+    await supabase.from("crock_groups").delete()
+      .eq("game_id", gameId).eq("contestant_id", contestantId).eq("stage", "r1").in("group_number", [1, 2, 3]);
+  }
+  return supabase.from("crock_groups").insert({
+    game_id: gameId, contestant_id: contestantId, group_number: groupNumber,
+    stage: "r1", time_seconds: null, advances: null, updated_at: new Date().toISOString(),
+  });
+}
+
+export async function assignToR2Group(gameId: string, contestantId: string, groupNumber: number) {
+  await supabase.from("crock_groups").delete()
+    .eq("game_id", gameId).eq("contestant_id", contestantId).eq("stage", "r2");
+  return supabase.from("crock_groups").insert({
+    game_id: gameId, contestant_id: contestantId, group_number: groupNumber,
+    stage: "r2", time_seconds: null, advances: null, updated_at: new Date().toISOString(),
+  });
+}
+
+export async function removeFromCrockGroup(gameId: string, contestantId: string, groupNumber: number, stage: "r1" | "r2") {
+  return supabase.from("crock_groups").delete()
+    .eq("game_id", gameId).eq("contestant_id", contestantId).eq("group_number", groupNumber).eq("stage", stage);
 }
 
 export async function saveCrockAssignments(
