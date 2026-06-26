@@ -1517,104 +1517,101 @@ function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAll
         </div>
       </div>
 
-      {r1.length > 0 && (
-        <div className="my-3 flex items-center gap-2">
-          <div className="flex-1 h-px bg-zinc-800/50" />
-          <span className="text-[10px] text-zinc-600">↓ top 2 per group → Round 2</span>
-          <div className="flex-1 h-px bg-zinc-800/50" />
-        </div>
-      )}
+      <div className="my-3 flex items-center gap-2">
+        <div className="flex-1 h-px bg-zinc-800/50" />
+        <span className="text-[10px] text-zinc-600">↓ top 2 per group → Round 2</span>
+        <div className="flex-1 h-px bg-zinc-800/50" />
+      </div>
 
       {/* ── Round 2 ── */}
-      {r1.length > 0 && (
-        <div className="mb-1">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Round 2</span>
-            <div className="flex-1 h-px bg-zinc-800" />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            {[1, 2].map(gn => {
-              const members = r2g(gn);
-              return (
-                <div key={gn} className="rounded-xl border border-zinc-800 overflow-hidden">
-                  <div className="px-3 py-2 border-b border-zinc-800 bg-zinc-900/50 text-xs font-bold text-zinc-300 flex justify-between items-center">
-                    <span>Group {gn}</span>
-                    <span className="text-zinc-600 font-normal text-[10px]">top 2 →Final</span>
-                  </div>
-                  <div className="p-2 space-y-1.5">
-                    {Array.from({ length: 4 }).map((_, i) =>
-                      renderSlot(members[i], `r2-${gn}-${i}`, "r2", gn, 2, "→F")
-                    )}
-                  </div>
+      <div className="mb-1">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Round 2</span>
+          <div className="flex-1 h-px bg-zinc-800" />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {[1, 2].map(gn => {
+            const members = r2g(gn);
+            return (
+              <div key={gn} className="rounded-xl border border-zinc-800 overflow-hidden">
+                <div className="px-3 py-2 border-b border-zinc-800 bg-zinc-900/50 text-xs font-bold text-zinc-300 flex justify-between items-center">
+                  <span>Group {gn}</span>
+                  <span className="text-zinc-600 font-normal text-[10px]">top 2 →Final</span>
                 </div>
-              );
-            })}
-          </div>
-          {availForR2.length > 0 && (
-            <div className="mt-2 rounded-xl border border-amber-900/30 bg-amber-950/10 p-3">
-              <p className="text-xs text-amber-400 mb-2 font-medium">Assign R1 qualifiers to R2 groups:</p>
-              <div className="space-y-1.5">
-                {availForR2.map(id => (
-                  <div key={id} className="flex items-center gap-2">
-                    <span className="flex-1 text-xs text-zinc-300">{getName(id)}</span>
-                    {[1, 2].map(gn => (
-                      <button key={gn} type="button" onClick={async () => { await assignToR2Group(game.id, id, gn); onMutate(); }}
-                        className="rounded px-3 py-1.5 bg-zinc-800 text-xs text-zinc-300 hover:bg-amber-500 hover:text-black touch-manipulation"
-                        style={{ WebkitTapHighlightColor: "transparent" }}>
-                        G{gn}
-                      </button>
-                    ))}
-                  </div>
-                ))}
+                <div className="p-2 space-y-1.5">
+                  {Array.from({ length: 4 }).map((_, i) =>
+                    renderSlot(members[i], `r2-${gn}-${i}`, "r2", gn, 2, "→F")
+                  )}
+                </div>
               </div>
+            );
+          })}
+        </div>
+        {availForR2.length > 0 && (
+          <div className="mt-2 rounded-xl border border-amber-900/30 bg-amber-950/10 p-3">
+            <p className="text-xs text-amber-400 mb-2 font-medium">Assign R1 qualifiers to R2 groups:</p>
+            <div className="space-y-1.5">
+              {availForR2.map(id => (
+                <div key={id} className="flex items-center gap-2">
+                  <span className="flex-1 text-xs text-zinc-300">{getName(id)}</span>
+                  {[1, 2].map(gn => (
+                    <button key={gn} type="button"
+                      onClick={async () => {
+                        const { error } = await assignToR2Group(game.id, id, gn);
+                        if (error) { toast.error("Assign failed — have you run migration v4?"); return; }
+                        onMutate();
+                      }}
+                      className="rounded px-3 py-1.5 bg-zinc-800 text-xs text-zinc-300 hover:bg-amber-500 hover:text-black touch-manipulation"
+                      style={{ WebkitTapHighlightColor: "transparent" }}>
+                      G{gn}
+                    </button>
+                  ))}
+                </div>
+              ))}
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
 
-      {r2.length > 0 && (
-        <div className="my-3 flex items-center gap-2">
-          <div className="flex-1 h-px bg-zinc-800/50" />
-          <span className="text-[10px] text-zinc-600">↓ top 2 from each R2 group → Final</span>
-          <div className="flex-1 h-px bg-zinc-800/50" />
-        </div>
-      )}
+      <div className="my-3 flex items-center gap-2">
+        <div className="flex-1 h-px bg-zinc-800/50" />
+        <span className="text-[10px] text-zinc-600">↓ top 2 from each R2 group → Final</span>
+        <div className="flex-1 h-px bg-zinc-800/50" />
+      </div>
 
       {/* ── Finals ── */}
-      {r2.length > 0 && (
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Finals</span>
-            <div className="flex-1 h-px bg-zinc-800" />
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            {([ ["final","🏆 1st–4th","border-amber-900/40 bg-amber-950/20","text-amber-400",r2FinalIds],
-                 ["consol_r2","5th–8th","border-zinc-800 bg-zinc-900/50","text-zinc-400",r2ConsolIds],
-                 ["consol_r1","9th–11th","border-zinc-800 bg-zinc-900/50","text-zinc-500",new Set(r1NonQualIds)],
-               ] as const).map(([stage, label, border, color, playerSet]) => (
-              <div key={stage} className={`rounded-xl border overflow-hidden ${border}`}>
-                <div className={`px-3 py-2 border-b text-xs font-bold ${border} ${color}`}
-                  style={{ borderBottomWidth: "1px" }}>
-                  {label}
-                </div>
-                <div className="divide-y divide-zinc-800/40">
-                  {playerSet.size === 0
-                    ? <p className="px-3 py-3 text-[10px] text-zinc-700 text-center">After {stage === "consol_r1" ? "R1" : "R2"}</p>
-                    : [...playerSet].map(cid => {
-                        const c = data.contestants.find(x => x.id === cid);
-                        if (!c) return null;
-                        return <CrockFinalRow key={cid} contestant={c} gameId={game.id}
-                          stage={stage as CrockFinal["stage"]}
-                          existing={finals.find(f => f.contestant_id === cid && f.stage === stage)?.time_seconds ?? null}
-                          onMutate={onMutate} />;
-                      })
-                  }
-                </div>
-              </div>
-            ))}
-          </div>
+      <div>
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Finals</span>
+          <div className="flex-1 h-px bg-zinc-800" />
         </div>
-      )}
+        <div className="grid grid-cols-3 gap-2">
+          {([ ["final","🏆 1st–4th","border-amber-900/40 bg-amber-950/20","text-amber-400",r2FinalIds],
+               ["consol_r2","5th–8th","border-zinc-800 bg-zinc-900/50","text-zinc-400",r2ConsolIds],
+               ["consol_r1","9th–11th","border-zinc-800 bg-zinc-900/50","text-zinc-500",new Set(r1NonQualIds)],
+             ] as const).map(([stage, label, border, color, playerSet]) => (
+            <div key={stage} className={`rounded-xl border overflow-hidden ${border}`}>
+              <div className={`px-3 py-2 border-b text-xs font-bold ${border} ${color}`}
+                style={{ borderBottomWidth: "1px" }}>
+                {label}
+              </div>
+              <div className="divide-y divide-zinc-800/40">
+                {playerSet.size === 0
+                  ? <p className="px-3 py-3 text-[10px] text-zinc-700 text-center">After {stage === "consol_r1" ? "R1" : "R2"}</p>
+                  : [...playerSet].map(cid => {
+                      const c = data.contestants.find(x => x.id === cid);
+                      if (!c) return null;
+                      return <CrockFinalRow key={cid} contestant={c} gameId={game.id}
+                        stage={stage as CrockFinal["stage"]}
+                        existing={finals.find(f => f.contestant_id === cid && f.stage === stage)?.time_seconds ?? null}
+                        onMutate={onMutate} />;
+                    })
+                }
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* ── Player picker modal ── */}
       {picker && (
@@ -1634,8 +1631,10 @@ function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAll
                 : pickerPlayers.map(c => (
                     <button key={c.id} type="button"
                       onClick={async () => {
-                        if (picker.stage === "r1") await assignToR1Group(game.id, c.id, picker.group);
-                        else await assignToR2Group(game.id, c.id, picker.group);
+                        const { error } = picker.stage === "r1"
+                          ? await assignToR1Group(game.id, c.id, picker.group)
+                          : await assignToR2Group(game.id, c.id, picker.group);
+                        if (error) { toast.error("Assign failed — have you run migration v4?"); return; }
                         setPicker(null);
                         onMutate();
                       }}
