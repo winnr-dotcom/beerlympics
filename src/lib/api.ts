@@ -354,9 +354,16 @@ export async function resetChessboardGame(gameId: string) {
   await supabase.from("team_game_rankings").delete().eq("game_id", gameId);
 }
 
-// Clears Popp Koppen results (R1 / playoff times, ranks, tiebreaks). Team assignments are kept.
+// Fully resets Popp Koppen (and ONLY this game) back to "not started": clears all
+// times, ranks and tiebreaks (team_game_rankings) plus the team assignments
+// (team_game_players), so its points disappear from the leaderboard.
+// Scoped to the single gameId — no other game is touched.
 export async function resetPoppKoppenGame(gameId: string) {
-  return supabase.from("team_game_rankings").delete().eq("game_id", gameId);
+  const [rankings, players] = await Promise.all([
+    supabase.from("team_game_rankings").delete().eq("game_id", gameId),
+    supabase.from("team_game_players").delete().eq("game_id", gameId),
+  ]);
+  return { error: rankings.error ?? players.error ?? null };
 }
 
 // ── Bonus points ─────────────────────────────────────────────

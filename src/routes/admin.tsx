@@ -585,15 +585,12 @@ function TeamsSetup({ game, data, onMutate }: { game: BLGame; data: FetchAllResu
   });
   const [saving, setSaving] = useState(false);
 
-  // Auto-save defaults on first open if no teams exist
+  // Suggest default teams from standings, but do NOT auto-save them — the admin
+  // must click "Save Teams". This keeps a not-yet-started game truly empty (no
+  // teams persisted, no points) and prevents teams reappearing after a reset.
   useEffect(() => {
     if (existingPlayers.length === 0 && ranked.length >= 11) {
-      const defaults = buildDefault();
-      setAssignments(defaults);
-      saveTeamAssignments(
-        game.id,
-        Object.entries(defaults).map(([cid, team]) => ({ contestantId: cid, teamNumber: team, isDisplaced: false })),
-      ).then(() => onMutate());
+      setAssignments(buildDefault());
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -770,11 +767,11 @@ function PoppKoppenPanel({ game, data, onMutate }: { game: BLGame; data: FetchAl
   const half = Math.ceil(activeTeams.length / 2);
 
   async function handleReset() {
-    if (!confirm("Reset all Popp Koppen times and rankings? Team assignments will be kept.")) return;
+    if (!confirm("Reset Popp Koppen back to NOT STARTED?\n\nThis clears all times, rankings, tiebreaks and team assignments for Popp Koppen only — its points disappear from the leaderboard. No other game is affected.")) return;
     const { error } = await resetPoppKoppenGame(game.id);
     if (error) { toast.error("Reset failed"); return; }
     setResetNonce((n) => n + 1); // remount sub-panels so their draft inputs clear
-    toast.success("Popp Koppen results cleared");
+    toast.success("Popp Koppen reset — not started");
     onMutate();
   }
 
