@@ -110,7 +110,8 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
         <div className="mb-6 flex gap-2">
           {([["times", "⏱ Times"], ["bonus", "⭐ Bonus"], ["contestants", "👥 PINs"]] as const).map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${tab === key ? "bg-amber-500 text-black" : "bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-white"}`}>
+              className={`flex-1 rounded-lg px-4 py-3 text-sm font-semibold transition-colors touch-manipulation ${tab === key ? "bg-amber-500 text-black" : "bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-white"}`}
+              style={{ WebkitTapHighlightColor: "transparent" }}>
               {label}
             </button>
           ))}
@@ -258,23 +259,25 @@ function TimeRow({ contestant, gameId, round, existing, bracket, onSave, onDelet
   }
 
   return (
-    <div className="flex items-center gap-2 px-4 py-2 hover:bg-zinc-800/20">
+    <div className="flex items-center gap-2 px-4 py-2.5 hover:bg-zinc-800/20">
       {bracket && (
-        <span className={`text-[10px] font-bold w-4 ${bracket === "A" ? "text-green-400" : "text-zinc-500"}`}>{bracket}</span>
+        <span className={`text-xs font-bold w-4 shrink-0 ${bracket === "A" ? "text-green-400" : "text-zinc-500"}`}>{bracket}</span>
       )}
-      <span className="w-24 text-sm text-zinc-300 truncate">{name}</span>
+      <span className="w-24 text-sm text-zinc-300 truncate shrink-0">{name}</span>
       <input value={val} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
-        placeholder="e.g. 45.32"
-        className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-white placeholder-zinc-600 focus:border-amber-500 focus:outline-none tabular-nums" />
+        placeholder="e.g. 45.32" inputMode="decimal"
+        className="flex-1 min-w-0 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white placeholder-zinc-600 focus:border-amber-500 focus:outline-none tabular-nums" />
       {isDirty && val && (
         <button onClick={handleSave} disabled={saving}
-          className="rounded-md bg-amber-500 px-2 py-1 text-xs font-semibold text-black hover:bg-amber-400 disabled:opacity-50">
+          className="rounded-lg bg-amber-500 px-3 py-2.5 text-sm font-semibold text-black hover:bg-amber-400 disabled:opacity-50 shrink-0 touch-manipulation"
+          style={{ WebkitTapHighlightColor: "transparent" }}>
           {saving ? "…" : "Save"}
         </button>
       )}
       {!isDirty && existing !== null && (
         <button onClick={async () => { await onDelete(); setVal(""); }}
-          className="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-500 hover:text-red-400">×</button>
+          className="rounded-lg border border-zinc-700 px-3 py-2.5 text-sm text-zinc-500 hover:text-red-400 shrink-0 touch-manipulation"
+          style={{ WebkitTapHighlightColor: "transparent" }}>×</button>
       )}
     </div>
   );
@@ -587,28 +590,33 @@ function PoppKoppenRankings({ game, data, onMutate }: { game: BLGame; data: Fetc
         const rank = rankDraft[teamNum] ?? "";
 
         return (
-          <div key={teamNum} className="flex items-center gap-3 rounded-lg border border-zinc-800 px-4 py-3">
-            <span className="w-14 text-xs font-semibold text-amber-500">Team {teamNum}</span>
-            <span className="flex-1 text-sm text-zinc-300">{members.map((m) => getName(m.contestant_id)).join(" + ")}</span>
-            <select
-              value={rank}
-              onChange={(e) => setRankDraft((prev) => ({ ...prev, [teamNum]: e.target.value }))}
-              className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-white focus:border-amber-500 focus:outline-none">
-              <option value="">— rank —</option>
-              {[1, 2, 3, 4, 5].map((r) => <option key={r} value={r.toString()}>{ORDINALS[r]}</option>)}
-            </select>
-            <button
-              onClick={async () => {
-                const r = parseInt(rank, 10);
-                if (isNaN(r)) { toast.error("Pick a rank"); return; }
-                const { error } = await upsertTeamRanking(game.id, teamNum, r, existing?.tiebreak_winner_id ?? null);
-                if (error) { toast.error("Save failed"); return; }
-                toast.success(`Team ${teamNum} → ${ORDINALS[r]}`);
-                onMutate();
-              }}
-              className="rounded-md bg-amber-500 px-2.5 py-1 text-xs font-semibold text-black hover:bg-amber-400">
-              Save
-            </button>
+          <div key={teamNum} className="rounded-lg border border-zinc-800 px-4 py-3">
+            <div className="flex items-center justify-between mb-2.5">
+              <span className="text-xs font-semibold text-amber-500">Team {teamNum}</span>
+              <span className="text-sm text-zinc-300">{members.map((m) => getName(m.contestant_id)).join(" + ")}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={rank}
+                onChange={(e) => setRankDraft((prev) => ({ ...prev, [teamNum]: e.target.value }))}
+                className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none touch-manipulation">
+                <option value="">— rank —</option>
+                {[1, 2, 3, 4, 5].map((r) => <option key={r} value={r.toString()}>{ORDINALS[r]}</option>)}
+              </select>
+              <button
+                onClick={async () => {
+                  const r = parseInt(rank, 10);
+                  if (isNaN(r)) { toast.error("Pick a rank"); return; }
+                  const { error } = await upsertTeamRanking(game.id, teamNum, r, existing?.tiebreak_winner_id ?? null);
+                  if (error) { toast.error("Save failed"); return; }
+                  toast.success(`Team ${teamNum} → ${ORDINALS[r]}`);
+                  onMutate();
+                }}
+                className="rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-black hover:bg-amber-400 touch-manipulation"
+                style={{ WebkitTapHighlightColor: "transparent" }}>
+                Save
+              </button>
+            </div>
           </div>
         );
       })}
@@ -743,35 +751,39 @@ function ChessMatchRow({ gameId, teamA, teamB, aMembers, bMembers, existing, get
 
   return (
     <div className={`rounded-lg border px-4 py-3 ${done ? "border-green-800 bg-green-950/10" : "border-zinc-800"}`}>
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-zinc-500 w-14">T{teamA} vs T{teamB}</span>
-
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs font-semibold text-zinc-400">Team {teamA} vs Team {teamB}</span>
+        {done && <span className="text-xs text-green-400">✓ Done</span>}
+      </div>
+      {/* Player selects */}
+      <div className="flex items-center gap-2 mb-3">
         <select value={playerA} onChange={(e) => setPlayerA(e.target.value)}
-          className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-white focus:outline-none">
+          className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white focus:outline-none touch-manipulation">
           {aMembers.map((m) => (
-            <option key={m.contestant_id} value={m.contestant_id}>{getName(m.contestant_id)}</option>
+            <option key={m.contestant_id} value={m.contestant_id}>{getName(m.contestant_id)} (T{teamA})</option>
           ))}
         </select>
-
-        <span className="text-zinc-600 text-xs">vs</span>
-
+        <span className="text-zinc-600 text-xs shrink-0">vs</span>
         <select value={playerB} onChange={(e) => setPlayerB(e.target.value)}
-          className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-white focus:outline-none">
+          className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white focus:outline-none touch-manipulation">
           {bMembers.map((m) => (
-            <option key={m.contestant_id} value={m.contestant_id}>{getName(m.contestant_id)}</option>
+            <option key={m.contestant_id} value={m.contestant_id}>{getName(m.contestant_id)} (T{teamB})</option>
           ))}
         </select>
-
-        <span className="text-zinc-600 text-xs ml-1">Winner:</span>
+      </div>
+      {/* Winner + Save */}
+      <div className="flex items-center gap-2">
         <button onClick={() => setWinner(1)}
-          className={`rounded px-2 py-1 text-xs font-semibold transition-colors ${winner === 1 ? "bg-amber-500 text-black" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}>
-          T{teamA} ({getName(playerA)})
+          className={`flex-1 rounded-lg py-2.5 text-sm font-semibold transition-colors touch-manipulation ${winner === 1 ? "bg-amber-500 text-black" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}
+          style={{ WebkitTapHighlightColor: "transparent" }}>
+          {getName(playerA)} wins
         </button>
         <button onClick={() => setWinner(2)}
-          className={`rounded px-2 py-1 text-xs font-semibold transition-colors ${winner === 2 ? "bg-amber-500 text-black" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}>
-          T{teamB} ({getName(playerB)})
+          className={`flex-1 rounded-lg py-2.5 text-sm font-semibold transition-colors touch-manipulation ${winner === 2 ? "bg-amber-500 text-black" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}
+          style={{ WebkitTapHighlightColor: "transparent" }}>
+          {getName(playerB)} wins
         </button>
-
         <button
           onClick={async () => {
             if (winner === null) { toast.error("Pick a winner"); return; }
@@ -780,8 +792,9 @@ function ChessMatchRow({ gameId, teamA, teamB, aMembers, bMembers, existing, get
             setSaving(false);
           }}
           disabled={saving || winner === null}
-          className="ml-auto rounded bg-amber-500 px-2.5 py-1 text-xs font-semibold text-black hover:bg-amber-400 disabled:opacity-40">
-          {saving ? "…" : done ? "Update" : "Save"}
+          className="rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-black hover:bg-amber-400 disabled:opacity-40 touch-manipulation shrink-0"
+          style={{ WebkitTapHighlightColor: "transparent" }}>
+          {saving ? "…" : done ? "✓" : "Save"}
         </button>
       </div>
     </div>

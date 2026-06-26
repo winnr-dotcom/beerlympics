@@ -216,78 +216,66 @@ function LeaderboardPage() {
 
         {data && rows.length > 0 && (
           <>
-            <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/30">
-              <table className="w-full min-w-[700px] text-sm">
+            <div className="overflow-x-auto rounded-xl border border-zinc-800">
+              <table className="w-full text-sm" style={{ minWidth: "max-content" }}>
                 <thead>
-                  <tr className="border-b border-zinc-800 bg-zinc-900/70">
-                    <th className="w-10 px-3 py-3.5 text-left text-zinc-500 font-medium">#</th>
-                    <th className="px-3 py-3.5 text-left text-zinc-300 font-semibold min-w-[130px]">Player</th>
+                  <tr className="border-b border-zinc-800 bg-zinc-900">
+                    {/* Sticky rank column */}
+                    <th className="sticky left-0 z-20 bg-zinc-900 w-10 px-2 py-3.5 text-center text-zinc-500 font-medium border-r border-zinc-800/50">#</th>
+                    {/* Sticky player column */}
+                    <th className="sticky left-10 z-20 bg-zinc-900 px-3 py-3.5 text-left text-zinc-300 font-semibold min-w-[110px] border-r border-zinc-800/50">Player</th>
                     {data.games.map((g) => (
-                      <th
-                        key={g.id}
-                        className="px-2 py-3.5 text-center text-xs font-semibold text-zinc-400 whitespace-nowrap"
-                        title={g.name}
-                      >
-                        {SHORT[g.name] ?? g.name.substring(0, 5).toUpperCase()}
+                      <th key={g.id} className="px-2 py-3.5 text-center text-xs font-semibold text-zinc-400 whitespace-nowrap" title={g.name}>
+                        {SHORT[g.name] ?? g.name.substring(0, 4).toUpperCase()}
                       </th>
                     ))}
                     <th className="px-2 py-3.5 text-center text-xs font-semibold text-zinc-400">+/−</th>
-                    <th className="px-3 py-3.5 text-center text-sm font-black text-amber-400 min-w-[60px]">TOTAL</th>
+                    <th className="px-3 py-3.5 text-center text-xs font-black text-amber-400 min-w-[52px]">TOT</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, idx) => (
-                    <tr
-                      key={row.contestant.id}
-                      className={`border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors ${
-                        idx === 0
-                          ? "bg-amber-950/30"
-                          : idx === 1
-                          ? "bg-zinc-800/20"
-                          : idx === 2
-                          ? "bg-orange-950/20"
-                          : ""
-                      }`}
-                    >
-                      <td className="w-10 px-3 py-3">
-                        <RankBadge rank={row.rank} />
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="flex items-center gap-2">
-                          <Avatar
-                            name={row.contestant.nickname ?? row.contestant.full_name}
-                            photo_url={row.contestant.photo_url}
-                          />
-                          <span className="font-medium text-white">
-                            {row.contestant.nickname ?? row.contestant.full_name.split(" ")[0]}
+                  {rows.map((row, idx) => {
+                    const rowCls =
+                      idx === 0 ? "bg-amber-950/20" :
+                      idx === 1 ? "bg-zinc-800/10" :
+                      idx === 2 ? "bg-orange-950/15" : "";
+                    const stickyBg =
+                      idx === 0 ? "bg-[#1a1007]" :
+                      idx === 1 ? "bg-zinc-900/80" :
+                      idx === 2 ? "bg-[#160e07]" : "bg-zinc-950";
+
+                    return (
+                      <tr key={row.contestant.id} className={`border-b border-zinc-800/40 ${rowCls}`}>
+                        {/* Sticky rank */}
+                        <td className={`sticky left-0 z-10 ${stickyBg} w-10 px-2 py-3 text-center border-r border-zinc-800/30`}>
+                          <RankBadge rank={row.rank} />
+                        </td>
+                        {/* Sticky player */}
+                        <td className={`sticky left-10 z-10 ${stickyBg} px-3 py-3 border-r border-zinc-800/30`}>
+                          <div className="flex items-center gap-2">
+                            <Avatar
+                              name={row.contestant.nickname ?? row.contestant.full_name}
+                              photo_url={row.contestant.photo_url}
+                            />
+                            <span className="font-medium text-white whitespace-nowrap text-xs sm:text-sm">
+                              {row.contestant.nickname ?? row.contestant.full_name.split(" ")[0]}
+                            </span>
+                          </div>
+                        </td>
+                        {data.games.map((g) => (
+                          <GameCell key={g.id} row={row} gameId={g.id} />
+                        ))}
+                        <td className="px-2 py-3 text-center text-sm">
+                          <span className={row.bonusTotal > 0 ? "font-semibold text-green-400" : row.bonusTotal < 0 ? "font-semibold text-red-400" : "text-zinc-700"}>
+                            {row.bonusTotal > 0 ? `+${row.bonusTotal}` : row.bonusTotal < 0 ? row.bonusTotal : "–"}
                           </span>
-                        </div>
-                      </td>
-                      {data.games.map((g) => (
-                        <GameCell key={g.id} row={row} gameId={g.id} />
-                      ))}
-                      <td className="px-2 py-3 text-center text-sm">
-                        <span
-                          className={
-                            row.bonusTotal > 0
-                              ? "font-semibold text-green-400"
-                              : row.bonusTotal < 0
-                              ? "font-semibold text-red-400"
-                              : "text-zinc-700"
-                          }
-                        >
-                          {row.bonusTotal > 0
-                            ? `+${row.bonusTotal}`
-                            : row.bonusTotal < 0
-                            ? row.bonusTotal
-                            : "–"}
-                        </span>
-                      </td>
-                      <td className="px-3 py-3 text-center">
-                        <span className="text-lg font-black text-amber-400 tabular-nums">{row.total}</span>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="px-3 py-3 text-center">
+                          <span className="text-base font-black text-amber-400 tabular-nums">{row.total}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

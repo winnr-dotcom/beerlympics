@@ -46,12 +46,24 @@ export async function fetchAll(): Promise<FetchAllResult> {
 }
 
 export async function loginWithPin(pin: string): Promise<Contestant | null> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("contestants")
     .select("*")
     .eq("pin_code", pin.trim())
     .single();
-  return data as Contestant | null;
+
+  if (error) {
+    // PGRST116 = 0 rows returned = simply wrong PIN
+    if (error.code === "PGRST116") return null;
+    // Any other error = DB not reachable or migration not run
+    throw new Error(
+      error.code === "42P01"
+        ? "Database not set up — run the SQL migration in Supabase first."
+        : `Database error: ${error.message}`,
+    );
+  }
+
+  return data as Contestant;
 }
 
 export async function updateContestantProfile(

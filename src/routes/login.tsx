@@ -14,17 +14,18 @@ function LoginPage() {
   const [pin, setPin] = useState("");
   const [loading, setLoading] = useState(false);
   const [shake, setShake] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (user) {
     navigate({ to: "/" });
     return null;
   }
 
-  async function handleSubmit() {
-    if (pin.length < 4) return;
+  async function tryLogin(code: string) {
     setLoading(true);
+    setError(null);
     try {
-      const contestant = await loginWithPin(pin);
+      const contestant = await loginWithPin(code);
       if (contestant) {
         setUser({
           id: contestant.id,
@@ -32,14 +33,18 @@ function LoginPage() {
           nickname: contestant.nickname,
           photo_url: contestant.photo_url,
         });
-        toast.success(`Welcome, ${contestant.nickname ?? contestant.full_name}! 🍺`);
+        toast.success(`Welcome, ${contestant.nickname ?? contestant.full_name.split(" ")[0]}! 🍺`);
         navigate({ to: "/" });
       } else {
         setShake(true);
         setTimeout(() => setShake(false), 600);
-        toast.error("Wrong PIN, try again");
         setPin("");
+        setError("Wrong PIN — try again");
       }
+    } catch (err: any) {
+      setPin("");
+      setError(err.message ?? "Could not connect. Check setup.");
+      toast.error(err.message ?? "Database error");
     } finally {
       setLoading(false);
     }
@@ -47,92 +52,111 @@ function LoginPage() {
 
   function handleKey(digit: string) {
     if (loading) return;
+    setError(null);
+
     if (digit === "⌫") {
       setPin((p) => p.slice(0, -1));
-    } else if (pin.length < 4) {
-      const next = pin + digit;
-      setPin(next);
-      if (next.length === 4) {
-        setTimeout(() => {
-          setLoading(true);
-          loginWithPin(next).then((contestant) => {
-            if (contestant) {
-              setUser({
-                id: contestant.id,
-                fullName: contestant.full_name,
-                nickname: contestant.nickname,
-                photo_url: contestant.photo_url,
-              });
-              toast.success(`Welcome, ${contestant.nickname ?? contestant.full_name}! 🍺`);
-              navigate({ to: "/" });
-            } else {
-              setShake(true);
-              setTimeout(() => setShake(false), 600);
-              toast.error("Wrong PIN, try again");
-              setPin("");
-            }
-            setLoading(false);
-          });
-        }, 120);
-      }
+      return;
+    }
+
+    if (pin.length >= 4) return;
+
+    const next = pin + digit;
+    setPin(next);
+
+    if (next.length === 4) {
+      // Small delay so user sees the 4th dot fill before we switch to loading
+      setTimeout(() => tryLogin(next), 100);
     }
   }
 
-  const rows = [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], ["⌫", "0", "✓"]];
+  const KEYS = [
+    ["1", "2", "3"],
+    ["4", "5", "6"],
+    ["7", "8", "9"],
+    ["⌫", "0", "✓"],
+  ];
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-4">
-      <div className="mb-8 text-center">
-        <div className="text-5xl">🍺</div>
-        <h1 className="mt-3 text-3xl font-black tracking-tight text-amber-400">BEERLYMPICS</h1>
-        <p className="mt-1 text-sm text-zinc-400">Enter your PIN code</p>
+    <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-4 pb-12">
+      {/* Logo */}
+      <div className="mb-8 text-center select-none">
+        <div className="text-6xl mb-2">🍺</div>
+        <h1 className="text-3xl font-black tracking-tight text-amber-400">BEERLYMPICS</h1>
+        <p className="mt-1 text-sm text-zinc-500">Enter your 4-digit PIN</p>
       </div>
 
-      {/* PIN display */}
-      <div className={`mb-8 flex gap-4 ${shake ? "animate-[shake_0.5s_ease-in-out]" : ""}`}>
+      {/* PIN dots */}
+      <div
+        className={`mb-6 flex gap-4 transition-all ${shake ? "animate-[shake_0.5s_ease-in-out]" : ""}`}
+        style={{ animation: shake ? "shake 0.5s ease-in-out" : undefined }}
+      >
         {[0, 1, 2, 3].map((i) => (
           <div
             key={i}
-            className={`h-14 w-14 rounded-xl border-2 flex items-center justify-center text-2xl font-bold transition-colors ${
-              pin.length > i
-                ? "border-amber-400 bg-amber-400/10 text-amber-400"
-                : "border-zinc-700 text-transparent"
+            className={`h-16 w-16 rounded-2xl border-2 flex items-center justify-center transition-all duration-150 ${
+              loading
+                ? "border-amber-400/50 bg-amber-400/10 animate-pulse"
+                : pin.length > i
+                ? "border-amber-400 bg-amber-400/15 scale-105"
+                : "border-zinc-700"
             }`}
           >
-            {pin.length > i ? "●" : "○"}
+            {pin.length > i && !loading && (
+              <div className="h-4 w-4 rounded-full bg-amber-400" />
+            )}
           </div>
         ))}
       </div>
 
-      {/* Keypad */}
-      <div className="grid grid-cols-3 gap-3 w-64">
-        {rows.flat().map((key) => (
-          <button
-            key={key}
-            onClick={() => handleKey(key)}
-            disabled={loading || (key === "✓" && pin.length < 4)}
-            className={`h-16 rounded-xl text-xl font-semibold transition-all active:scale-95 ${
-              key === "✓"
-                ? "bg-amber-500 text-black hover:bg-amber-400 disabled:opacity-30"
-                : key === "⌫"
-                ? "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
-                : "bg-zinc-800 text-white hover:bg-zinc-700"
-            } disabled:cursor-not-allowed`}
-          >
-            {loading && key === "✓" ? "..." : key}
-          </button>
-        ))}
+      {/* Error message */}
+      <div className="mb-4 h-6 text-center">
+        {error && (
+          <p className="text-sm text-red-400">{error}</p>
+        )}
       </div>
 
-      <a href="/" className="mt-10 text-xs text-zinc-600 hover:text-zinc-400">
+      {/* Keypad */}
+      <div className="grid grid-cols-3 gap-3 w-full max-w-[280px]">
+        {KEYS.flat().map((key) => {
+          const isBackspace = key === "⌫";
+          const isConfirm = key === "✓";
+          const disabled = loading || (isConfirm && pin.length < 4);
+
+          return (
+            <button
+              key={key}
+              onClick={() => handleKey(key)}
+              disabled={disabled}
+              className={`h-[72px] rounded-2xl text-2xl font-semibold select-none transition-all active:scale-95 touch-manipulation ${
+                isConfirm
+                  ? "bg-amber-500 text-black hover:bg-amber-400 disabled:opacity-25"
+                  : isBackspace
+                  ? "bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-25"
+                  : "bg-zinc-800 text-white hover:bg-zinc-700"
+              } disabled:cursor-not-allowed`}
+              style={{ WebkitTapHighlightColor: "transparent" }}
+            >
+              {loading && isConfirm ? (
+                <span className="text-base">…</span>
+              ) : key}
+            </button>
+          );
+        })}
+      </div>
+
+      <a
+        href="/"
+        className="mt-10 text-xs text-zinc-700 hover:text-zinc-500 touch-manipulation"
+      >
         View leaderboard without logging in →
       </a>
 
       <style>{`
         @keyframes shake {
           0%, 100% { transform: translateX(0); }
-          10%, 30%, 50%, 70%, 90% { transform: translateX(-6px); }
-          20%, 40%, 60%, 80% { transform: translateX(6px); }
+          15%, 45%, 75% { transform: translateX(-8px); }
+          30%, 60%, 90% { transform: translateX(8px); }
         }
       `}</style>
     </div>
