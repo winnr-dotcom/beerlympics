@@ -105,6 +105,29 @@ export function computePointsGameResults(
   return out;
 }
 
+// ── Individual race (lower is better, R1 = final, no playoff) ─
+
+export function computeRaceResults(
+  gameId: string,
+  contestants: Contestant[],
+  round1: Round1Result[],
+): Record<string, GameResult> {
+  const r1 = round1.filter((r) => r.game_id === gameId);
+  const out: Record<string, GameResult> = {};
+
+  if (r1.length > 0) {
+    const sorted = [...r1].sort((a, b) => a.time_seconds - b.time_seconds);
+    sorted.forEach((r, i) => {
+      out[r.contestant_id] = { points: POINTS[i + 1] ?? 0, isProvisional: false, rank: i + 1 };
+    });
+  }
+
+  for (const c of contestants) {
+    if (!out[c.id]) out[c.id] = { points: null, isProvisional: false, rank: null };
+  }
+  return out;
+}
+
 // ── Lives game (Foot Tennis, Slap Cup) ────────────────────────
 // Elimination order 1 = first out = position 11
 // Remaining 6 go to playoffs (round2 determines positions 1-6)
@@ -160,6 +183,47 @@ export function computeLivesGameResults(
       out[s.contestant_id] = { points: POINTS[rank] ?? 0, isProvisional: eliminated.length < 5, rank };
     });
   }
+
+  for (const c of contestants) {
+    if (!out[c.id]) out[c.id] = { points: null, isProvisional: false, rank: null };
+  }
+  return out;
+}
+
+// ── Lives game, no playoff (Slap Cup) ─────────────────────────
+// When 5 eliminated: ranks 7-11 by elimination order, ranks 1-6 by lives remaining.
+// All scores final once 5 are eliminated.
+
+export function computeNoPlayoffLivesResults(
+  gameId: string,
+  contestants: Contestant[],
+  livesStates: LivesGameState[],
+): Record<string, GameResult> {
+  const states = livesStates.filter((s) => s.game_id === gameId);
+  const out: Record<string, GameResult> = {};
+
+  if (states.length === 0) {
+    for (const c of contestants) out[c.id] = { points: null, isProvisional: false, rank: null };
+    return out;
+  }
+
+  const eliminated = states
+    .filter((s) => s.eliminated_order !== null)
+    .sort((a, b) => a.eliminated_order! - b.eliminated_order!);
+  const alive = states
+    .filter((s) => s.eliminated_order === null)
+    .sort((a, b) => b.current_lives - a.current_lives);
+
+  const isDone = eliminated.length >= 5;
+
+  eliminated.forEach((s, i) => {
+    const rank = 11 - i;
+    out[s.contestant_id] = { points: POINTS[rank] ?? 0, isProvisional: !isDone, rank };
+  });
+  alive.forEach((s, i) => {
+    const rank = i + 1;
+    out[s.contestant_id] = { points: POINTS[rank] ?? 0, isProvisional: !isDone, rank };
+  });
 
   for (const c of contestants) {
     if (!out[c.id]) out[c.id] = { points: null, isProvisional: false, rank: null };
@@ -442,11 +506,17 @@ export function computeLeaderboard(
         case "individual":
           all = computeGameResults(game.id, contestants, round1, round2);
           break;
+        case "individual_race":
+          all = computeRaceResults(game.id, contestants, round1);
+          break;
         case "individual_points":
           all = computePointsGameResults(game.id, contestants, round1, round2);
           break;
         case "lives_bracket":
           all = computeLivesGameResults(game.id, contestants, livesStates, round2);
+          break;
+        case "lives_no_playoff":
+          all = computeNoPlayoffLivesResults(game.id, contestants, livesStates);
           break;
         case "cup_format":
           all = computeCupGameResults(game.id, contestants, crockGroups, crockFinals);
@@ -526,11 +596,12 @@ export function parseTime(raw: string): number | null {
   return isNaN(v) ? null : v;
 }
 
-// All 15 round-robin pairs for 6 teams
+// All 15 round-robin pairs for 6 teams — interleaved so every team plays every 3rd match
+// (polygon rotation method; 3 matches per round × 5 rounds)
 export const CHESS_PAIRS: [number, number][] = [
-  [1, 2], [1, 3], [1, 4], [1, 5], [1, 6],
-  [2, 3], [2, 4], [2, 5], [2, 6],
-  [3, 4], [3, 5], [3, 6],
-  [4, 5], [4, 6],
-  [5, 6],
+  [1, 6], [2, 5], [3, 4],  // Round 1
+  [1, 5], [4, 6], [2, 3],  // Round 2
+  [1, 4], [3, 5], [2, 6],  // Round 3
+  [1, 3], [2, 4], [5, 6],  // Round 4
+  [1, 2], [3, 6], [4, 5],  // Round 5
 ];

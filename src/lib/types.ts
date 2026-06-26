@@ -8,9 +8,11 @@ export type Contestant = {
 };
 
 export type GameType =
-  | "individual"        // time-based, lower is better (Hinderløypen, Labyrinten)
+  | "individual"        // time-based, lower is better (Labyrinten)
+  | "individual_race"   // time-based, R1 is final, no playoff (Hinderløypen)
   | "individual_points" // points, higher is better (Can Baseball)
-  | "lives_bracket"     // lives elimination then bracket (Foot-Tennis, Slap Cup)
+  | "lives_bracket"     // lives elimination then bracket playoff (Foot-Tennis)
+  | "lives_no_playoff"  // lives elimination, ranks by lives/order, no playoff (Slap Cup)
   | "cup_format"        // group stage + knockout (Crock it)
   | "team_popp"         // team time game (Popp Koppen)
   | "team_chess";       // team league game (Chessboard)

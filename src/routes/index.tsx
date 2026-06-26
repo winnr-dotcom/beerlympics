@@ -298,6 +298,10 @@ function LeaderboardPage() {
                     else if (r2c > 0) { statusLabel = "Playoffs"; statusColor = "text-amber-400"; borderColor = "border-amber-800"; }
                     else if (r1c >= 11) { statusLabel = "R1 Done"; statusColor = "text-blue-400"; borderColor = "border-blue-800"; }
                     else if (r1c > 0) { statusLabel = `${r1c}/11`; statusColor = "text-yellow-400"; borderColor = "border-yellow-800"; }
+                  } else if (g.game_type === "individual_race") {
+                    const r1c = data.round1.filter((r) => r.game_id === g.id).length;
+                    if (r1c >= 11) { statusLabel = "✓ Done"; statusColor = "text-green-400"; borderColor = "border-green-800"; }
+                    else if (r1c > 0) { statusLabel = `${r1c}/11`; statusColor = "text-yellow-400"; borderColor = "border-yellow-800"; }
                   } else if (g.game_type === "lives_bracket") {
                     const lc = data.livesStates.filter((s) => s.game_id === g.id).length;
                     const elim = data.livesStates.filter((s) => s.game_id === g.id && s.eliminated_order !== null).length;
@@ -305,6 +309,12 @@ function LeaderboardPage() {
                     if (r2c >= 6) { statusLabel = "✓ Done"; statusColor = "text-green-400"; borderColor = "border-green-800"; }
                     else if (r2c > 0) { statusLabel = "Playoffs"; statusColor = "text-amber-400"; borderColor = "border-amber-800"; }
                     else if (elim >= 5) { statusLabel = "Ready KO"; statusColor = "text-blue-400"; borderColor = "border-blue-800"; }
+                    else if (lc > 0) { statusLabel = `${elim}/5 out`; statusColor = "text-yellow-400"; borderColor = "border-yellow-800"; }
+                    else { statusLabel = "❤️ Lives"; }
+                  } else if (g.game_type === "lives_no_playoff") {
+                    const lc = data.livesStates.filter((s) => s.game_id === g.id).length;
+                    const elim = data.livesStates.filter((s) => s.game_id === g.id && s.eliminated_order !== null).length;
+                    if (elim >= 5) { statusLabel = "✓ Done"; statusColor = "text-green-400"; borderColor = "border-green-800"; }
                     else if (lc > 0) { statusLabel = `${elim}/5 out`; statusColor = "text-yellow-400"; borderColor = "border-yellow-800"; }
                     else { statusLabel = "❤️ Lives"; }
                   } else if (g.game_type === "cup_format") {

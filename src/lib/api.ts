@@ -219,6 +219,10 @@ export async function resetLivesGame(gameId: string) {
   return supabase.from("lives_game_state").delete().eq("game_id", gameId);
 }
 
+export async function resetRound2ForGame(gameId: string) {
+  return supabase.from("round2_results").delete().eq("game_id", gameId);
+}
+
 // ── Crock it group stage ──────────────────────────────────────
 
 export async function upsertCrockGroup(

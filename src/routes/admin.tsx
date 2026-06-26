@@ -16,6 +16,7 @@ import {
   upsertChessboardMatch,
   upsertLivesState,
   resetLivesGame,
+  resetRound2ForGame,
   upsertCrockGroup,
   saveCrockAssignments,
   saveCrockR2Assignments,
@@ -148,24 +149,23 @@ function TimesTab({ data, onMutate }: { data: FetchAllResult; onMutate: () => vo
         <label className="text-sm text-zinc-400 whitespace-nowrap">Game:</label>
         <select value={gameId} onChange={(e) => setGameId(e.target.value)}
           className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white focus:border-amber-500 focus:outline-none">
-          {data.games.map((g) => (
-            <option key={g.id} value={g.id}>
-              {g.name} {g.game_type !== "individual" ? (g.game_type === "team_popp" ? "👥" : "♟️") : ""}
-            </option>
-          ))}
+          {data.games.map((g) => {
+            const icon = g.game_type === "team_popp" ? " 👥" : g.game_type === "team_chess" ? " ♟️" : "";
+            return <option key={g.id} value={g.id}>{g.name}{icon}</option>;
+          })}
         </select>
-        {game && game.game_type !== "individual" && (
+        {game && (game.game_type === "team_popp" || game.game_type === "team_chess") && (
           <span className="text-xs text-amber-500 font-semibold">TEAM GAME</span>
         )}
       </div>
 
-      {game?.game_type === "individual" && (
+      {(game?.game_type === "individual" || game?.game_type === "individual_race") && (
         <IndividualTimesPanel key={game.id} game={game} data={data} onMutate={onMutate} />
       )}
       {game?.game_type === "individual_points" && (
         <CanBaseballPanel key={game.id} game={game} data={data} onMutate={onMutate} />
       )}
-      {game?.game_type === "lives_bracket" && (
+      {(game?.game_type === "lives_bracket" || game?.game_type === "lives_no_playoff") && (
         <LivesPanel key={game.id} game={game} data={data} onMutate={onMutate} />
       )}
       {game?.game_type === "cup_format" && (
@@ -186,10 +186,11 @@ function TimesTab({ data, onMutate }: { data: FetchAllResult; onMutate: () => vo
 // ──────────────────────────────────────────────────────────────
 
 function IndividualTimesPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
+  const isRace = game.game_type === "individual_race";
   const r1ForGame = data.round1.filter((r) => r.game_id === game.id);
   const r2ForGame = data.round2.filter((r) => r.game_id === game.id);
   const { bracketA, bracketB } = getBrackets(game.id, data.round1);
-  const hasBrackets = bracketA.length >= 6;
+  const hasBrackets = !isRace && bracketA.length >= 6;
 
   return (
     <>
@@ -265,7 +266,7 @@ function IndividualTimesPanel({ game, data, onMutate }: { game: BLGame; data: Fe
         </div>
       )}
 
-      {!hasBrackets && (
+      {!isRace && !hasBrackets && (
         <p className="text-xs text-zinc-600 text-center py-3">
           Enter all 11 Round 1 times to unlock playoff brackets
         </p>
@@ -858,8 +859,8 @@ function ChessboardLeague({ game, data, onMutate }: { game: BLGame; data: FetchA
 
   return (
     <div>
-      {/* Standings */}
-      {played > 0 && (
+      {/* Standings — always visible once teams are set */}
+      {activeTeamNums.length > 0 && (
         <div className="mb-5 rounded-xl border border-zinc-800 overflow-hidden">
           <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800">
             <span className="text-xs font-semibold text-zinc-300">League standings ({played}/{CHESS_PAIRS.length} played)</span>
@@ -877,12 +878,11 @@ function ChessboardLeague({ game, data, onMutate }: { game: BLGame; data: FetchA
               {[...ranksMap.entries()].sort((a, b) => a[1] - b[1]).map(([team, rank]) => {
                 const members = getTeamMembers(team);
                 const gd = (gf.get(team) ?? 0) - (ga.get(team) ?? 0);
+                const teamName = members.map((m) => getName(m.contestant_id)).join(" & ") || `Team ${team}`;
                 return (
                   <tr key={team} className="border-b border-zinc-800/40">
                     <td className="px-3 py-2 font-bold text-amber-400">{rank}</td>
-                    <td className="px-3 py-2 text-zinc-300 text-xs">
-                      T{team}: {members.map((m) => getName(m.contestant_id)).join("+")}
-                    </td>
+                    <td className="px-3 py-2 text-zinc-300 text-xs">{teamName}</td>
                     <td className="px-3 py-2 text-center font-bold text-zinc-200">{pts.get(team) ?? 0}</td>
                     <td className={`px-3 py-2 text-center ${gd > 0 ? "text-green-400" : gd < 0 ? "text-red-400" : "text-zinc-500"}`}>{gd > 0 ? `+${gd}` : gd}</td>
                   </tr>
@@ -899,17 +899,20 @@ function ChessboardLeague({ game, data, onMutate }: { game: BLGame; data: FetchA
           const existing = matches.find((m) => m.team_a === ta && m.team_b === tb);
           const aMembers = getTeamMembers(ta);
           const bMembers = getTeamMembers(tb);
+          const teamAName = aMembers.map((m) => getName(m.contestant_id)).join(" & ") || `Team ${ta}`;
+          const teamBName = bMembers.map((m) => getName(m.contestant_id)).join(" & ") || `Team ${tb}`;
 
           return (
             <ChessMatchRow key={`${ta}-${tb}`}
               gameId={game.id} teamA={ta} teamB={tb}
+              teamAName={teamAName} teamBName={teamBName}
               aMembers={aMembers} bMembers={bMembers}
               existing={existing ?? null}
               getName={getName}
               onSave={async (playerAId, playerBId, scoreA, scoreB) => {
                 const { error } = await upsertChessboardMatch(game.id, ta, tb, playerAId, playerBId, scoreA, scoreB);
                 if (error) { toast.error("Save failed"); return; }
-                toast.success(`Team ${ta} vs Team ${tb} — result saved`);
+                toast.success(`${teamAName} vs ${teamBName} — result saved`);
                 onMutate();
               }}
             />
@@ -920,8 +923,9 @@ function ChessboardLeague({ game, data, onMutate }: { game: BLGame; data: FetchA
   );
 }
 
-function ChessMatchRow({ gameId, teamA, teamB, aMembers, bMembers, existing, getName, onSave }: {
+function ChessMatchRow({ gameId, teamA, teamB, teamAName, teamBName, aMembers, bMembers, existing, getName, onSave }: {
   gameId: string; teamA: number; teamB: number;
+  teamAName: string; teamBName: string;
   aMembers: TeamGamePlayer[]; bMembers: TeamGamePlayer[];
   existing: { player_a_id: string | null; player_b_id: string | null; winner_team: number | null; score_a: number | null; score_b: number | null } | null;
   getName: (id: string) => string;
@@ -937,13 +941,13 @@ function ChessMatchRow({ gameId, teamA, teamB, aMembers, bMembers, existing, get
   const sa = parseInt(scoreA, 10), sb = parseInt(scoreB, 10);
   const canSave = !isNaN(sa) && !isNaN(sb);
   const resultLabel = canSave
-    ? sa > sb ? `T${teamA} wins` : sb > sa ? `T${teamB} wins` : "Draw"
+    ? sa > sb ? `${teamAName} wins` : sb > sa ? `${teamBName} wins` : "Draw"
     : null;
 
   return (
     <div className={`rounded-lg border px-4 py-3 ${done ? "border-green-800 bg-green-950/10" : "border-zinc-800"}`}>
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-semibold text-zinc-400">Team {teamA} vs Team {teamB}</span>
+        <span className="text-xs font-semibold text-zinc-400">{teamAName} vs {teamBName}</span>
         {done && <span className="text-xs text-green-400">✓ {existing?.score_a ?? ""}–{existing?.score_b ?? ""}</span>}
       </div>
       {/* Player selects */}
@@ -988,6 +992,7 @@ function ChessMatchRow({ gameId, teamA, teamB, aMembers, bMembers, existing, get
 // ──────────────────────────────────────────────────────────────
 
 function LivesPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
+  const hasPlayoff = game.game_type !== "lives_no_playoff";
   const [subTab, setSubTab] = useState<"lives" | "playoffs">("lives");
   const states = data.livesStates.filter((s) => s.game_id === game.id);
   const { bracketA, bracketB } = getLivesBrackets(game.id, data.livesStates);
@@ -1003,6 +1008,7 @@ function LivesPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResu
 
   async function handleInit() {
     await resetLivesGame(game.id);
+    await resetRound2ForGame(game.id);
     await Promise.all(
       data.contestants.map((c) =>
         upsertLivesState(game.id, c.id, 3, 3, null)
@@ -1043,13 +1049,18 @@ function LivesPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResu
   return (
     <div>
       <div className="mb-4 flex items-center gap-2">
-        {(["lives", "playoffs"] as const).map((t) => (
-          <button key={t} onClick={() => setSubTab(t)}
-            className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors touch-manipulation ${subTab === t ? "bg-zinc-200 text-zinc-900" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}`}
+        <button onClick={() => setSubTab("lives")}
+          className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors touch-manipulation ${subTab === "lives" ? "bg-zinc-200 text-zinc-900" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}`}
+          style={{ WebkitTapHighlightColor: "transparent" }}>
+          ❤️ Lives
+        </button>
+        {hasPlayoff && (
+          <button onClick={() => setSubTab("playoffs")}
+            className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors touch-manipulation ${subTab === "playoffs" ? "bg-zinc-200 text-zinc-900" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}`}
             style={{ WebkitTapHighlightColor: "transparent" }}>
-            {t === "lives" ? "❤️ Lives" : "🏆 Playoffs"}
+            🏆 Playoffs
           </button>
-        ))}
+        )}
         <button onClick={() => { if (confirm("Reset lives game?")) handleInit(); }}
           className="rounded-lg border border-zinc-700 px-3 py-2.5 text-xs text-zinc-600 hover:text-red-400 touch-manipulation shrink-0">
           Reset
@@ -1059,7 +1070,7 @@ function LivesPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResu
       {subTab === "lives" && (
         <div className="space-y-2">
           <p className="text-xs text-zinc-500 mb-3">
-            {eliminated.length}/5 eliminated · {5 - eliminated.length} more until playoffs
+            {eliminated.length}/5 eliminated{hasPlayoff ? ` · ${5 - eliminated.length} more until playoffs` : ""}
           </p>
           {[...states]
             .sort((a, b) => {
@@ -1249,9 +1260,9 @@ function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAll
   const r1Seen = new Set(r1Groups.map((g) => g.contestant_id));
   const r1NonQualifiers = [...r1Seen].filter((id) => !r1Qualifiers.has(id));
 
-  // Wildcard: best 3rd from groups A(1) and B(2) only
+  // Wildcard: best 3rd from groups A(1), B(2), and C(3)
   const abThirds: typeof r1Groups = [];
-  for (const gn of [1, 2]) {
+  for (const gn of [1, 2, 3]) {
     const members = r1Grouped.get(gn) ?? [];
     const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
     if (sorted[2]) abThirds.push(sorted[2]);
@@ -1336,7 +1347,7 @@ function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAll
           {unassigned.length > 0 && (
             <div className="mb-4 rounded-xl border border-amber-900/50 bg-amber-950/20 p-4">
               <p className="text-xs font-semibold text-amber-300 mb-1">Assign players to R1 groups</p>
-              <p className="text-xs text-zinc-500 mb-3">A, B, C: 3 players each · D: 2 players (+ wildcard from A/B)</p>
+              <p className="text-xs text-zinc-500 mb-3">A, B, C: 3 players each · D: 2 players (+ wildcard from A/B/C)</p>
               <div className="space-y-2">
                 {unassigned.map((c) => (
                   <div key={c.id} className="flex items-center gap-2">
@@ -1401,7 +1412,7 @@ function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAll
                   <div className="px-4 py-3 border-t border-zinc-800/60 bg-amber-950/10">
                     <p className="text-xs text-amber-300 mb-2">
                       ★ Wildcard available: <span className="font-semibold">{getName(wildcardEntry.contestant_id)}</span>
-                      {" "}(best 3rd from A/B · {formatTime(wildcardEntry.time_seconds!)})
+                      {" "}(best 3rd from A/B/C · {formatTime(wildcardEntry.time_seconds!)})
                     </p>
                     <button onClick={handleAddWildcard}
                       className="rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-black hover:bg-amber-400 touch-manipulation"
@@ -1412,7 +1423,7 @@ function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAll
                 )}
                 {isGroupD && members.length === 0 && !wildcardEntry && (
                   <div className="px-4 py-3 text-xs text-zinc-600">
-                    Enter Group A and B times first to unlock the wildcard slot
+                    Enter Group A, B, and C times first to unlock the wildcard slot
                   </div>
                 )}
               </div>
