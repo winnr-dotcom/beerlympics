@@ -1,24 +1,18 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Outlet, Link, createRootRouteWithContext, useRouter } from "@tanstack/react-router";
-import { useEffect } from "react";
-import { reportLovableError } from "../lib/lovable-error-reporting";
+import { useEffect, useState } from "react";
 import { Toaster } from "sonner";
+import { AuthContext, type AuthUser, getStoredAuth, setStoredAuth, clearStoredAuth } from "@/lib/auth";
 
 function NotFoundComponent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="max-w-md text-center">
-        <h1 className="font-display text-7xl gold-text">404</h1>
-        <h2 className="mt-4 text-xl font-semibold text-foreground">Page not found</h2>
-        <p className="mt-2 text-sm text-muted-foreground">This medal isn't on the podium.</p>
-        <div className="mt-6">
-          <Link
-            to="/"
-            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:opacity-90"
-          >
-            Back to leaderboard
-          </Link>
-        </div>
+      <div className="text-center">
+        <h1 className="text-6xl font-bold text-amber-400">404</h1>
+        <p className="mt-3 text-muted-foreground">This medal isn&apos;t on the podium.</p>
+        <Link to="/" className="mt-6 inline-flex items-center rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black hover:bg-amber-400">
+          Back to leaderboard
+        </Link>
       </div>
     </div>
   );
@@ -26,27 +20,17 @@ function NotFoundComponent() {
 
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   const router = useRouter();
-  useEffect(() => {
-    reportLovableError(error, { boundary: "root_error_component" });
-  }, [error]);
+  useEffect(() => { console.error(error); }, [error]);
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="max-w-md text-center">
-        <h1 className="text-xl font-semibold text-foreground">Something spilled.</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Try again, or head back to the leaderboard.</p>
-        <div className="mt-6 flex flex-wrap justify-center gap-2">
-          <button
-            onClick={() => { router.invalidate(); reset(); }}
-            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
-          >
+      <div className="text-center">
+        <h1 className="text-xl font-semibold">Something spilled.</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{error.message}</p>
+        <div className="mt-6 flex gap-2 justify-center">
+          <button onClick={() => { router.invalidate(); reset(); }} className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black">
             Try again
           </button>
-          <a
-            href="/"
-            className="inline-flex items-center justify-center rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground"
-          >
-            Leaderboard
-          </a>
+          <a href="/" className="rounded-md border border-border px-4 py-2 text-sm">Leaderboard</a>
         </div>
       </div>
     </div>
@@ -61,10 +45,24 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const [user, setUserState] = useState<AuthUser | null>(() => getStoredAuth());
+
+  function setUser(u: AuthUser | null) {
+    setUserState(u);
+    if (u) setStoredAuth(u);
+    else clearStoredAuth();
+  }
+
+  function logout() {
+    setUser(null);
+  }
+
   return (
-    <QueryClientProvider client={queryClient}>
-      <Outlet />
-      <Toaster theme="dark" position="top-center" richColors />
-    </QueryClientProvider>
+    <AuthContext.Provider value={{ user, setUser, logout }}>
+      <QueryClientProvider client={queryClient}>
+        <Outlet />
+        <Toaster theme="dark" position="top-center" richColors />
+      </QueryClientProvider>
+    </AuthContext.Provider>
   );
 }

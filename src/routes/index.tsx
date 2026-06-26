@@ -1,323 +1,342 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { Trophy, Beer, Settings, Timer, Swords, Medal } from "lucide-react";
-import { useState, useMemo } from "react";
-import {
-  fetchAll,
-  formatTime,
-  computeOverall,
-  computeGameStandings,
-  computeGroupStandings,
-  lastUpdatedRecently,
-  useBeerlympicsRealtime,
-  type Game,
-} from "@/lib/beerlympics";
-import { cn } from "@/lib/utils";
+import { fetchAll, type FetchAllResult } from "@/lib/api";
+import { computeLeaderboard, formatTime, getBrackets } from "@/lib/scoring";
+import { useAuth } from "@/lib/auth";
+import type { LeaderboardRow, BLGame } from "@/lib/types";
 
 export const Route = createFileRoute("/")({
-  component: PublicPage,
+  component: LeaderboardPage,
 });
 
-function PublicPage() {
-  useBeerlympicsRealtime();
-  const { data, isLoading } = useQuery({
-    queryKey: ["beerlympics"],
-    queryFn: fetchAll,
-  });
+const SHORT: Record<string, string> = {
+  "Hinderløypen": "HIND",
+  "Can Baseball":  "CAN",
+  "Popp Koppen":   "POPP",
+  "Labyrinten":    "LAB",
+  "Foot-Tennis":   "FOOT",
+  "Crock it":      "CROCK",
+  "Chessboard":    "CHESS",
+  "Slap Cup":      "SLAP",
+};
 
-  const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
+function Avatar({ name, photo_url }: { name: string; photo_url: string | null }) {
+  const initial = name.charAt(0).toUpperCase();
+  const hue = initial.charCodeAt(0) * 37;
+  return photo_url ? (
+    <img src={photo_url} alt={name} className="h-8 w-8 rounded-full object-cover shrink-0 border border-zinc-700" />
+  ) : (
+    <div
+      className="h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
+      style={{ backgroundColor: `hsl(${hue % 360} 50% 40%)` }}
+    >
+      {initial}
+    </div>
+  );
+}
 
-  const overall = useMemo(() => {
-    if (!data) return [];
-    return computeOverall(data.games, data.participants, data.timeResults, data.h2hMatches);
-  }, [data]);
+function RankBadge({ rank }: { rank: number }) {
+  if (rank === 1) return <span className="text-xl leading-none">🥇</span>;
+  if (rank === 2) return <span className="text-xl leading-none">🥈</span>;
+  if (rank === 3) return <span className="text-xl leading-none">🥉</span>;
+  return <span className="text-sm font-semibold text-zinc-400">{rank}</span>;
+}
 
-  const isLive = data ? lastUpdatedRecently(data.games, data.timeResults, data.h2hMatches) : false;
-  const selectedGame = data?.games.find((g) => g.id === selectedGameId) ?? data?.games[0];
+function GameCell({ row, gameId }: { row: LeaderboardRow; gameId: string }) {
+  const r = row.gameResults[gameId];
+  if (!r || r.points === null) {
+    return <td className="px-2 py-3 text-center text-zinc-600 text-sm">–</td>;
+  }
+  const pts = r.points;
+  const prov = r.isProvisional;
+  const colorClass = prov
+    ? "text-zinc-500 italic"
+    : pts >= 9
+    ? "text-amber-400"
+    : pts >= 6
+    ? "text-amber-600"
+    : "text-zinc-300";
 
   return (
-    <div className="min-h-screen">
-      <header className="hero-bg relative overflow-hidden border-b border-border">
-        <div className="absolute right-4 top-4 z-10">
-          <Link
-            to="/admin"
-            className="inline-flex items-center gap-1 rounded-md border border-border bg-card/60 px-3 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur transition hover:text-foreground"
-          >
-            <Settings className="h-3.5 w-3.5" /> Admin
-          </Link>
-        </div>
-        <div className="mx-auto max-w-5xl px-4 py-12 sm:py-16 text-center">
-          <div className="mb-3 flex items-center justify-center gap-3">
-            <Beer className="h-10 w-10 text-primary" />
-            <Trophy className="h-12 w-12 text-primary glow rounded-full" />
-            <Beer className="h-10 w-10 text-primary scale-x-[-1]" />
-          </div>
-          <h1 className="font-display text-6xl sm:text-8xl gold-text">BEERLYMPICS</h1>
-          <p className="mt-1 font-display text-3xl sm:text-4xl text-foreground/80">2024</p>
-          {isLive && (
-            <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-destructive/40 bg-destructive/10 px-3 py-1 text-xs font-bold tracking-wider text-destructive">
-              <span className="h-2 w-2 rounded-full bg-destructive animate-live" />
-              LIVE
+    <td className="px-2 py-3 text-center text-sm" title={prov ? "Provisional (Round 1 only)" : `Rank ${r.rank}`}>
+      <span className={`font-semibold tabular-nums ${colorClass}`}>
+        {pts}
+        {prov && <sup className="text-[9px] not-italic text-zinc-600">P</sup>}
+      </span>
+    </td>
+  );
+}
+
+function BracketCard({ game, data }: { game: BLGame; data: FetchAllResult }) {
+  const { bracketA, bracketB } = getBrackets(game.id, data.round1);
+  const r1 = data.round1.filter((r) => r.game_id === game.id).sort((a, b) => a.time_seconds - b.time_seconds);
+  const r2 = data.round2.filter((r) => r.game_id === game.id);
+
+  const getName = (id: string) => {
+    const c = data.contestants.find((c) => c.id === id);
+    return c ? (c.nickname ?? c.full_name.split(" ")[0]) : "?";
+  };
+
+  const makeRows = (ids: string[]) =>
+    ids.map((id) => ({
+      id,
+      name: getName(id),
+      r1Time: r1.find((r) => r.contestant_id === id)?.time_seconds ?? null,
+      r2Time: r2.find((r) => r.contestant_id === id)?.time_seconds ?? null,
+    }));
+
+  const aRows = makeRows(bracketA).sort((a, b) =>
+    a.r2Time !== null && b.r2Time !== null ? a.r2Time - b.r2Time :
+    a.r2Time !== null ? -1 : b.r2Time !== null ? 1 :
+    (a.r1Time ?? 99999) - (b.r1Time ?? 99999)
+  );
+  const bRows = makeRows(bracketB).sort((a, b) =>
+    a.r2Time !== null && b.r2Time !== null ? a.r2Time - b.r2Time :
+    a.r2Time !== null ? -1 : b.r2Time !== null ? 1 :
+    (a.r1Time ?? 99999) - (b.r1Time ?? 99999)
+  );
+
+  const hasR2 = r2.length > 0;
+
+  return (
+    <div className="rounded-xl border border-zinc-800 p-4">
+      <h3 className="mb-3 font-bold text-amber-400 text-sm">{game.name}</h3>
+      <div className="grid grid-cols-2 gap-4 text-xs">
+        <div>
+          <div className="mb-1.5 font-semibold text-green-400">🏆 Top 6</div>
+          {aRows.map((e, i) => (
+            <div key={e.id} className="flex justify-between py-0.5">
+              <span className="text-zinc-300">{i + 1}. {e.name}</span>
+              <span className="text-zinc-500 tabular-nums">
+                {hasR2 ? (e.r2Time !== null ? formatTime(e.r2Time) : "–") : (e.r1Time !== null ? formatTime(e.r1Time) : "–")}
+              </span>
             </div>
-          )}
+          ))}
+        </div>
+        <div>
+          <div className="mb-1.5 font-semibold text-zinc-400">Bottom 5</div>
+          {bRows.map((e, i) => (
+            <div key={e.id} className="flex justify-between py-0.5">
+              <span className="text-zinc-300">{i + 1}. {e.name}</span>
+              <span className="text-zinc-500 tabular-nums">
+                {hasR2 ? (e.r2Time !== null ? formatTime(e.r2Time) : "–") : (e.r1Time !== null ? formatTime(e.r1Time) : "–")}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LeaderboardPage() {
+  const { user } = useAuth();
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["beerlympics"],
+    queryFn: fetchAll,
+    refetchInterval: 15_000,
+    staleTime: 5_000,
+  });
+
+  const rows = data
+    ? computeLeaderboard(data.contestants, data.games, data.round1, data.round2, data.bonuses)
+    : [];
+
+  const hasAnyResult = (data?.round1.length ?? 0) > 0;
+  const bracketGames = data?.games.filter((g) => (data.round1.filter((r) => r.game_id === g.id).length) >= 6) ?? [];
+
+  return (
+    <div className="min-h-screen bg-zinc-950 text-white">
+      <header className="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950/90 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">🍺</span>
+            <span className="font-black tracking-tight text-amber-400 text-xl hidden sm:block">BEERLYMPICS</span>
+            <span className="font-black tracking-tight text-amber-400 text-xl sm:hidden">BL</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {user ? (
+              <Link
+                to="/profile"
+                className="flex items-center gap-1.5 rounded-full border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:border-amber-500 hover:text-amber-400 transition-colors"
+              >
+                <span className="text-sm">👤</span>
+                <span>{user.nickname ?? user.fullName.split(" ")[0]}</span>
+              </Link>
+            ) : (
+              <Link
+                to="/login"
+                className="rounded-full bg-amber-500 px-3 py-1.5 text-xs font-semibold text-black hover:bg-amber-400 transition-colors"
+              >
+                Login
+              </Link>
+            )}
+            <Link
+              to="/admin"
+              className="rounded-full border border-zinc-800 px-3 py-1.5 text-xs text-zinc-600 hover:text-zinc-300 hover:border-zinc-600 transition-colors"
+            >
+              Admin
+            </Link>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-4 py-8 space-y-10">
-        <section>
-          <h2 className="mb-4 flex items-center gap-2 font-display text-3xl text-foreground">
-            <Trophy className="h-7 w-7 text-primary" /> Overall Standings
-          </h2>
-          <div className="overflow-hidden rounded-xl border border-border bg-card card-elev">
-            <table className="w-full text-sm">
-              <thead className="bg-secondary/50 text-xs uppercase tracking-wider text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-3 text-left">#</th>
-                  <th className="px-4 py-3 text-left">Player / Team</th>
-                  <th className="px-2 py-3 text-center">🥇</th>
-                  <th className="px-2 py-3 text-center">🥈</th>
-                  <th className="px-2 py-3 text-center">🥉</th>
-                  <th className="px-4 py-3 text-center">Played</th>
-                  <th className="px-4 py-3 text-right">Points</th>
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading && (
-                  <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">Loading…</td></tr>
-                )}
-                {!isLoading && overall.length === 0 && (
-                  <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No participants yet. Add some in the admin panel.</td></tr>
-                )}
-                {overall.map((row, i) => (
-                  <tr key={row.participant.id} className={cn("border-t border-border transition-colors hover:bg-secondary/30", i < 3 && "bg-secondary/20")}>
-                    <td className="px-4 py-3 font-display text-2xl">
-                      {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : i + 1}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <span className="inline-block h-8 w-8 rounded-full ring-2 ring-border" style={{ background: row.participant.color }} />
-                        <div>
-                          <div className="font-semibold text-foreground">{row.participant.name}</div>
-                          {row.participant.type === "team" && row.participant.members && (
-                            <div className="text-xs text-muted-foreground">{row.participant.members}</div>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-2 py-3 text-center font-mono">{row.gold}</td>
-                    <td className="px-2 py-3 text-center font-mono">{row.silver}</td>
-                    <td className="px-2 py-3 text-center font-mono">{row.bronze}</td>
-                    <td className="px-4 py-3 text-center text-muted-foreground">{row.played}</td>
-                    <td className="px-4 py-3 text-right font-display text-2xl gold-text">{row.points}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section>
-          <h2 className="mb-4 flex items-center gap-2 font-display text-3xl text-foreground">
-            <Medal className="h-7 w-7 text-primary" /> Games
-          </h2>
-          {data && data.games.length === 0 && (
-            <p className="text-muted-foreground">No games added yet.</p>
+      <main className="mx-auto max-w-7xl px-2 pb-12 pt-6">
+        <div className="mb-6 text-center">
+          <h1 className="text-4xl font-black tracking-tight text-amber-400">LEADERBOARD</h1>
+          {hasAnyResult && (
+            <p className="mt-1 text-xs text-zinc-600">Live · auto-refreshes every 15s · P = provisional</p>
           )}
-          {data && data.games.length > 0 && (
-            <>
-              <div className="mb-4 flex flex-wrap gap-2">
-                {data.games.map((g) => (
-                  <button
-                    key={g.id}
-                    onClick={() => setSelectedGameId(g.id)}
-                    className={cn(
-                      "rounded-lg border px-3 py-2 text-sm font-semibold transition",
-                      (selectedGame?.id === g.id)
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : "border-border bg-card text-foreground hover:border-primary/50",
-                    )}
-                  >
-                    {g.scoring_type === "time" ? <Timer className="mr-1 inline h-3.5 w-3.5" /> : <Swords className="mr-1 inline h-3.5 w-3.5" />}
-                    {g.name}
-                    <StatusPill status={g.status} />
-                  </button>
-                ))}
-              </div>
-              {selectedGame && <GameDetail game={selectedGame} />}
-            </>
-          )}
-        </section>
-
-        <footer className="pt-8 text-center text-xs text-muted-foreground">
-          🍺 May the best drinker win. Drink responsibly.
-        </footer>
-      </main>
-    </div>
-  );
-}
-
-function StatusPill({ status }: { status: Game["status"] }) {
-  const label = {
-    upcoming: "Upcoming",
-    group_stage: "Group",
-    playoffs: "Playoffs",
-    completed: "Done",
-  }[status];
-  const cls = {
-    upcoming: "bg-muted text-muted-foreground",
-    group_stage: "bg-primary/20 text-primary",
-    playoffs: "bg-destructive/20 text-destructive",
-    completed: "bg-foreground/10 text-foreground/80",
-  }[status];
-  return <span className={cn("ml-2 rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wider", cls)}>{label}</span>;
-}
-
-function GameDetail({ game }: { game: Game }) {
-  const { data } = useQuery({ queryKey: ["beerlympics"], queryFn: fetchAll });
-  if (!data) return null;
-  const standings = computeGameStandings(game, data.participants, data.timeResults, data.h2hMatches);
-  const pmap = new Map(data.participants.map((p) => [p.id, p]));
-
-  return (
-    <div className="rounded-xl border border-border bg-card card-elev p-5 animate-pop">
-      <h3 className="mb-4 font-display text-2xl text-foreground">{game.name}</h3>
-
-      {game.scoring_type === "time" ? (
-        <div className="space-y-2">
-          {standings.length === 0 && <p className="text-sm text-muted-foreground">No times posted yet.</p>}
-          {standings.map((s) => {
-            const tr = data.timeResults.find((t) => t.game_id === game.id && t.participant_id === s.participant.id);
-            return (
-              <div key={s.participant.id} className={cn("flex items-center justify-between rounded-lg border border-border bg-background/50 px-4 py-3", s.rank <= 3 && "border-primary/40")}>
-                <div className="flex items-center gap-3">
-                  <span className="w-6 font-display text-xl">{s.rank === 1 ? "🥇" : s.rank === 2 ? "🥈" : s.rank === 3 ? "🥉" : s.rank}</span>
-                  <span className="inline-block h-6 w-6 rounded-full" style={{ background: s.participant.color }} />
-                  <span className="font-semibold">{s.participant.name}</span>
-                </div>
-                <span className="font-display text-xl gold-text">{tr ? formatTime(tr.time_seconds) : "—"}</span>
-              </div>
-            );
-          })}
         </div>
-      ) : (
-        <H2HView game={game} pmap={pmap} matches={data.h2hMatches} groups={data.groups} />
-      )}
 
-      {standings.length > 0 && game.status !== "completed" && (
-        <p className="mt-4 text-xs text-muted-foreground">Points: 🥇 {game.points_first} · 🥈 {game.points_second} · 🥉 {game.points_third}</p>
-      )}
-    </div>
-  );
-}
+        {isLoading && (
+          <div className="py-24 text-center text-zinc-600">
+            <div className="text-4xl mb-3">🍺</div>
+            Loading standings...
+          </div>
+        )}
 
-function H2HView({
-  game, pmap, matches, groups,
-}: {
-  game: Game;
-  pmap: Map<string, import("@/lib/beerlympics").Participant>;
-  matches: import("@/lib/beerlympics").H2HMatch[];
-  groups: import("@/lib/beerlympics").ParticipantGroup[];
-}) {
-  const groupStandings = computeGroupStandings(game, matches);
-  const groupA = groupStandings.filter((s) => groups.find((g) => g.game_id === game.id && g.participant_id === s.participant_id)?.group_name === "A");
-  const groupB = groupStandings.filter((s) => groups.find((g) => g.game_id === game.id && g.participant_id === s.participant_id)?.group_name === "B");
+        {error && (
+          <div className="py-24 text-center text-red-400">
+            Failed to connect to database. Check Supabase env vars.
+          </div>
+        )}
 
-  const playoff = matches.filter((m) => m.game_id === game.id && m.stage === "playoff");
-  const sf1 = playoff.find((m) => m.bracket_slot === "SF1");
-  const sf2 = playoff.find((m) => m.bracket_slot === "SF2");
-  const finalM = playoff.find((m) => m.bracket_slot === "FINAL");
-  const thirdM = playoff.find((m) => m.bracket_slot === "THIRD");
+        {data && rows.length === 0 && (
+          <div className="py-24 text-center text-zinc-600">
+            <div className="text-4xl mb-3">🏆</div>
+            <p>Leaderboard is empty. Run the database migration to get started.</p>
+          </div>
+        )}
 
-  return (
-    <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-2">
-        {[{ label: "Group A", rows: groupA }, { label: "Group B", rows: groupB }].map((g) => (
-          <div key={g.label}>
-            <h4 className="mb-2 font-display text-xl text-primary">{g.label}</h4>
-            <div className="overflow-hidden rounded-lg border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-secondary/40 text-xs uppercase text-muted-foreground">
-                  <tr><th className="px-3 py-2 text-left">Player</th><th className="px-2 py-2">P</th><th className="px-2 py-2">W</th><th className="px-2 py-2">L</th><th className="px-2 py-2">Pts</th></tr>
+        {data && rows.length > 0 && (
+          <>
+            <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/30">
+              <table className="w-full min-w-[700px] text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-800 bg-zinc-900/70">
+                    <th className="w-10 px-3 py-3.5 text-left text-zinc-500 font-medium">#</th>
+                    <th className="px-3 py-3.5 text-left text-zinc-300 font-semibold min-w-[130px]">Player</th>
+                    {data.games.map((g) => (
+                      <th
+                        key={g.id}
+                        className="px-2 py-3.5 text-center text-xs font-semibold text-zinc-400 whitespace-nowrap"
+                        title={g.name}
+                      >
+                        {SHORT[g.name] ?? g.name.substring(0, 5).toUpperCase()}
+                      </th>
+                    ))}
+                    <th className="px-2 py-3.5 text-center text-xs font-semibold text-zinc-400">+/−</th>
+                    <th className="px-3 py-3.5 text-center text-sm font-black text-amber-400 min-w-[60px]">TOTAL</th>
+                  </tr>
                 </thead>
                 <tbody>
-                  {g.rows.length === 0 && <tr><td colSpan={5} className="px-3 py-3 text-center text-muted-foreground">No data</td></tr>}
-                  {g.rows.map((row) => {
-                    const p = pmap.get(row.participant_id);
-                    if (!p) return null;
-                    return (
-                      <tr key={row.participant_id} className="border-t border-border">
-                        <td className="px-3 py-2">{p.name}</td>
-                        <td className="px-2 py-2 text-center">{row.played}</td>
-                        <td className="px-2 py-2 text-center text-primary">{row.won}</td>
-                        <td className="px-2 py-2 text-center text-muted-foreground">{row.lost}</td>
-                        <td className="px-2 py-2 text-center font-bold">{row.points}</td>
-                      </tr>
-                    );
-                  })}
+                  {rows.map((row, idx) => (
+                    <tr
+                      key={row.contestant.id}
+                      className={`border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors ${
+                        idx === 0
+                          ? "bg-amber-950/30"
+                          : idx === 1
+                          ? "bg-zinc-800/20"
+                          : idx === 2
+                          ? "bg-orange-950/20"
+                          : ""
+                      }`}
+                    >
+                      <td className="w-10 px-3 py-3">
+                        <RankBadge rank={row.rank} />
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-2">
+                          <Avatar
+                            name={row.contestant.nickname ?? row.contestant.full_name}
+                            photo_url={row.contestant.photo_url}
+                          />
+                          <span className="font-medium text-white">
+                            {row.contestant.nickname ?? row.contestant.full_name.split(" ")[0]}
+                          </span>
+                        </div>
+                      </td>
+                      {data.games.map((g) => (
+                        <GameCell key={g.id} row={row} gameId={g.id} />
+                      ))}
+                      <td className="px-2 py-3 text-center text-sm">
+                        <span
+                          className={
+                            row.bonusTotal > 0
+                              ? "font-semibold text-green-400"
+                              : row.bonusTotal < 0
+                              ? "font-semibold text-red-400"
+                              : "text-zinc-700"
+                          }
+                        >
+                          {row.bonusTotal > 0
+                            ? `+${row.bonusTotal}`
+                            : row.bonusTotal < 0
+                            ? row.bonusTotal
+                            : "–"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-center">
+                        <span className="text-lg font-black text-amber-400 tabular-nums">{row.total}</span>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
-          </div>
-        ))}
-      </div>
 
-      {(game.status === "playoffs" || game.status === "completed") && (
-        <div>
-          <h4 className="mb-3 font-display text-xl text-primary">Playoff Bracket</h4>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="space-y-3">
-              <BracketCard title="SF1" match={sf1} pmap={pmap} />
-              <BracketCard title="SF2" match={sf2} pmap={pmap} />
+            {/* Game status cards */}
+            <div className="mt-8">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-500">Games</h2>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+                {data.games.map((g) => {
+                  const r1c = data.round1.filter((r) => r.game_id === g.id).length;
+                  const r2c = data.round2.filter((r) => r.game_id === g.id).length;
+                  const done = r2c >= 11;
+                  const playoffs = r2c > 0;
+                  const r1done = r1c >= 11;
+                  const active = r1c > 0 && r1c < 11;
+                  return (
+                    <div
+                      key={g.id}
+                      className={`rounded-lg border px-3 py-2 text-center ${
+                        done
+                          ? "border-green-800 bg-green-950/30"
+                          : playoffs
+                          ? "border-amber-800 bg-amber-950/30"
+                          : r1done
+                          ? "border-blue-800 bg-blue-950/20"
+                          : active
+                          ? "border-yellow-800 bg-yellow-950/20"
+                          : "border-zinc-800"
+                      }`}
+                    >
+                      <div className="text-xs font-semibold text-zinc-300 truncate">{g.name}</div>
+                      <div className={`mt-0.5 text-[10px] ${done ? "text-green-400" : playoffs ? "text-amber-400" : r1done ? "text-blue-400" : active ? "text-yellow-400" : "text-zinc-600"}`}>
+                        {done ? "✓ Done" : playoffs ? "Playoffs" : r1done ? "R1 Done" : active ? `R1 ${r1c}/11` : "Upcoming"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div className="flex items-center"><BracketCard title="Final" match={finalM} pmap={pmap} big /></div>
-            <BracketCard title="3rd Place" match={thirdM} pmap={pmap} />
-          </div>
-        </div>
-      )}
 
-      {game.scoring_type === "h2h" && matches.filter((m) => m.game_id === game.id && m.stage === "group").length > 0 && (
-        <div>
-          <h4 className="mb-2 font-display text-xl text-primary">Group Matches</h4>
-          <div className="space-y-2">
-            {matches.filter((m) => m.game_id === game.id && m.stage === "group").map((m) => {
-              const a = m.participant_a ? pmap.get(m.participant_a) : null;
-              const b = m.participant_b ? pmap.get(m.participant_b) : null;
-              return (
-                <div key={m.id} className="flex items-center justify-between rounded-md border border-border bg-background/50 px-3 py-2 text-sm">
-                  <span className={cn("flex-1", m.winner_id === m.participant_a && "font-bold text-primary")}>{a?.name ?? "?"}</span>
-                  <span className="mx-3 font-mono text-muted-foreground">{m.score_a ?? "-"} : {m.score_b ?? "-"}</span>
-                  <span className={cn("flex-1 text-right", m.winner_id === m.participant_b && "font-bold text-primary")}>{b?.name ?? "?"}</span>
+            {/* Bracket cards */}
+            {bracketGames.length > 0 && (
+              <div className="mt-8">
+                <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-500">Playoff Brackets</h2>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {bracketGames.map((g) => (
+                    <BracketCard key={g.id} game={g} data={data} />
+                  ))}
                 </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function BracketCard({
-  title, match, pmap, big,
-}: {
-  title: string;
-  match?: import("@/lib/beerlympics").H2HMatch;
-  pmap: Map<string, import("@/lib/beerlympics").Participant>;
-  big?: boolean;
-}) {
-  const a = match?.participant_a ? pmap.get(match.participant_a) : null;
-  const b = match?.participant_b ? pmap.get(match.participant_b) : null;
-  return (
-    <div className={cn("rounded-lg border border-border bg-background/50 p-3", big && "border-primary/60 glow")}>
-      <div className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">{title}</div>
-      <div className={cn("flex items-center justify-between text-sm", match?.winner_id === match?.participant_a && "font-bold text-primary")}>
-        <span>{a?.name ?? "TBD"}</span>
-        <span className="font-mono">{match?.score_a ?? "-"}</span>
-      </div>
-      <div className={cn("mt-1 flex items-center justify-between text-sm", match?.winner_id === match?.participant_b && "font-bold text-primary")}>
-        <span>{b?.name ?? "TBD"}</span>
-        <span className="font-mono">{match?.score_b ?? "-"}</span>
-      </div>
+              </div>
+            )}
+          </>
+        )}
+      </main>
     </div>
   );
 }
