@@ -1,7 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { fetchAll, type FetchAllResult } from "@/lib/api";
-import { computeLeaderboard, formatTime, getBrackets } from "@/lib/scoring";
+import { computeLeaderboard, formatTime, getBrackets, computeChessboardTeamRanks, CHESS_PAIRS } from "@/lib/scoring";
 import { useAuth } from "@/lib/auth";
 import type { LeaderboardRow, BLGame } from "@/lib/types";
 
@@ -129,8 +130,310 @@ function BracketCard({ game, data }: { game: BLGame; data: FetchAllResult }) {
   );
 }
 
+// ── Modal helpers ─────────────────────────────────────────────
+
+function MRow({ rank, name, value, top, badge, badgeColor }: {
+  rank: number | null; name: string; value: string;
+  top?: boolean; badge?: string; badgeColor?: string;
+}) {
+  return (
+    <div className={`flex items-center gap-3 px-4 py-2.5 border-b border-zinc-800/30 ${top ? "bg-amber-950/20" : ""}`}>
+      <span className="text-xs font-bold text-zinc-500 w-5 text-right shrink-0">{rank ?? "–"}</span>
+      <span className="flex-1 text-sm text-zinc-200">{name}</span>
+      {badge && <span className={`text-xs shrink-0 ${badgeColor ?? "text-zinc-500"}`}>{badge}</span>}
+      <span className={`text-sm tabular-nums shrink-0 ${value === "–" ? "text-zinc-600" : "text-zinc-300"}`}>{value}</span>
+    </div>
+  );
+}
+function MSec({ label, color }: { label: string; color: string }) {
+  return <div className={`px-4 py-2 text-xs font-semibold border-b border-zinc-800/50 ${color}`}>{label}</div>;
+}
+function MEmpty({ msg }: { msg: string }) {
+  return <p className="text-center py-10 text-zinc-600 text-sm">{msg}</p>;
+}
+
+// ── Game progress modal ───────────────────────────────────────
+
+function GameProgressModal({ game, data, onClose }: { game: BLGame; data: FetchAllResult; onClose: () => void }) {
+  const getName = (id: string) => {
+    const c = data.contestants.find((x) => x.id === id);
+    return c ? (c.nickname ?? c.full_name.split(" ")[0]) : "?";
+  };
+
+  // ── Individual time (Labyrinten, Hinderløypen) ──
+  const renderIndividual = () => {
+    const r1 = data.round1.filter((r) => r.game_id === game.id).sort((a, b) => a.time_seconds - b.time_seconds);
+    const r2 = data.round2.filter((r) => r.game_id === game.id).sort((a, b) => a.time_seconds - b.time_seconds);
+    const { bracketA, bracketB } = getBrackets(game.id, data.round1);
+    const hasPlayoffs = game.game_type !== "individual_race" && bracketA.length >= 6;
+    if (r1.length === 0) return <MEmpty msg="No times recorded yet" />;
+    if (r2.length > 0 && hasPlayoffs) {
+      const r2A = r2.filter((r) => bracketA.includes(r.contestant_id));
+      const r2B = r2.filter((r) => bracketB.includes(r.contestant_id));
+      const pendingA = bracketA.filter((id) => !r2A.some((r) => r.contestant_id === id));
+      const pendingB = bracketB.filter((id) => !r2B.some((r) => r.contestant_id === id));
+      return (<>
+        <MSec label="🏆 Top 6" color="text-green-400" />
+        {r2A.map((r, i) => <MRow key={r.id} rank={i+1} name={getName(r.contestant_id)} value={formatTime(r.time_seconds)} top={i===0} />)}
+        {pendingA.map((id) => <MRow key={id} rank={null} name={getName(id)} value="–" />)}
+        <MSec label="Bottom 5" color="text-zinc-400" />
+        {r2B.map((r, i) => <MRow key={r.id} rank={i+7} name={getName(r.contestant_id)} value={formatTime(r.time_seconds)} />)}
+        {pendingB.map((id) => <MRow key={id} rank={null} name={getName(id)} value="–" />)}
+      </>);
+    }
+    const notYet = data.contestants.filter((c) => !r1.some((r) => r.contestant_id === c.id));
+    return (<>
+      <div className="px-4 py-2 text-xs text-zinc-500 border-b border-zinc-800/40">
+        {r1.length}/11{game.game_type === "individual_race" ? " · best time wins" : hasPlayoffs ? " · playoffs unlocked ✓" : ` · ${11 - r1.length} more for playoffs`}
+      </div>
+      {r1.map((r, i) => <MRow key={r.id} rank={i+1} name={getName(r.contestant_id)} value={formatTime(r.time_seconds)} top={i===0} />)}
+      {notYet.map((c) => <MRow key={c.id} rank={null} name={getName(c.id)} value="–" />)}
+    </>);
+  };
+
+  // ── Can Baseball (points, higher=better) ──
+  const renderPoints = () => {
+    const r1 = data.round1.filter((r) => r.game_id === game.id).sort((a, b) => b.time_seconds - a.time_seconds);
+    const r2 = data.round2.filter((r) => r.game_id === game.id).sort((a, b) => b.time_seconds - a.time_seconds);
+    const bracketAIds = new Set(r1.slice(0, 6).map((r) => r.contestant_id));
+    if (r1.length === 0) return <MEmpty msg="No scores recorded yet" />;
+    if (r1.length >= 11 && r2.length > 0) {
+      const r2A = r2.filter((r) => bracketAIds.has(r.contestant_id));
+      const r2B = r2.filter((r) => !bracketAIds.has(r.contestant_id));
+      return (<>
+        <MSec label="🏆 Top 6" color="text-green-400" />
+        {r2A.map((r, i) => <MRow key={r.id} rank={i+1} name={getName(r.contestant_id)} value={String(r.time_seconds)} top={i===0} />)}
+        <MSec label="Bottom 5" color="text-zinc-400" />
+        {r2B.map((r, i) => <MRow key={r.id} rank={i+7} name={getName(r.contestant_id)} value={String(r.time_seconds)} />)}
+      </>);
+    }
+    return (<>
+      <div className="px-4 py-2 text-xs text-zinc-500 border-b border-zinc-800/40">{r1.length}/11 · higher is better</div>
+      {r1.map((r, i) => <MRow key={r.id} rank={i+1} name={getName(r.contestant_id)} value={String(r.time_seconds)} top={i===0} />)}
+      {data.contestants.filter((c) => !r1.some((r) => r.contestant_id === c.id)).map((c) => (
+        <MRow key={c.id} rank={null} name={getName(c.id)} value="–" />
+      ))}
+    </>);
+  };
+
+  // ── Lives games ──
+  const renderLives = () => {
+    const states = data.livesStates.filter((s) => s.game_id === game.id);
+    const r2 = data.round2.filter((r) => r.game_id === game.id);
+    if (states.length === 0) return <MEmpty msg="Game not started yet" />;
+    const alive = states.filter((s) => s.eliminated_order === null).sort((a, b) => b.current_lives - a.current_lives);
+    const elim = states.filter((s) => s.eliminated_order !== null).sort((a, b) => b.eliminated_order! - a.eliminated_order!);
+    const aliveSet = new Set(alive.map((s) => s.contestant_id));
+    // Playoff results
+    if (game.game_type === "lives_bracket" && r2.length > 0) {
+      const r2Top = r2.filter((r) => aliveSet.has(r.contestant_id)).sort((a, b) => a.time_seconds - b.time_seconds);
+      const r2Bot = r2.filter((r) => !aliveSet.has(r.contestant_id)).sort((a, b) => a.time_seconds - b.time_seconds);
+      return (<>
+        <MSec label="🏆 Top 6 — Playoffs" color="text-green-400" />
+        {r2Top.map((r, i) => <MRow key={r.id} rank={i+1} name={getName(r.contestant_id)} value={formatTime(r.time_seconds)} top={i===0} />)}
+        {alive.filter((s) => !r2Top.some((r) => r.contestant_id === s.contestant_id)).map((s) => (
+          <MRow key={s.id} rank={null} name={getName(s.contestant_id)} value="not run" />
+        ))}
+        {(r2Bot.length > 0 || elim.length > 0) && <MSec label="Bottom 5" color="text-zinc-400" />}
+        {r2Bot.map((r, i) => <MRow key={r.id} rank={i+7} name={getName(r.contestant_id)} value={formatTime(r.time_seconds)} />)}
+        {elim.filter((s) => !r2Bot.some((r) => r.contestant_id === s.contestant_id)).map((s) => (
+          <MRow key={s.id} rank={null} name={getName(s.contestant_id)} value="–" />
+        ))}
+      </>);
+    }
+    return (<>
+      {alive.length > 0 && <>
+        <MSec label={`❤️ Playing — ${alive.length} left`} color="text-green-400" />
+        {alive.map((s) => (
+          <div key={s.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-zinc-800/30">
+            <span className="flex-1 text-sm font-medium text-zinc-200">{getName(s.contestant_id)}</span>
+            <div className="flex gap-1.5">
+              {Array.from({ length: s.initial_lives }).map((_, i) => (
+                <div key={i} className={`h-4 w-4 rounded-full ${i < s.current_lives ? "bg-red-500" : "bg-zinc-700"}`} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </>}
+      {elim.length > 0 && <>
+        <MSec label={`Out — ${elim.length}/5`} color="text-zinc-500" />
+        {elim.map((s) => (
+          <div key={s.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-zinc-800/30 opacity-60">
+            <span className="text-xs font-bold text-zinc-600 w-5 text-right shrink-0">{12 - s.eliminated_order!}</span>
+            <span className="flex-1 text-sm text-zinc-400">{getName(s.contestant_id)}</span>
+            <div className="flex gap-1.5">
+              {Array.from({ length: s.initial_lives }).map((_, i) => (
+                <div key={i} className="h-4 w-4 rounded-full bg-zinc-700" />
+              ))}
+            </div>
+          </div>
+        ))}
+      </>}
+    </>);
+  };
+
+  // ── Crock it ──
+  const renderCup = () => {
+    const r1g = data.crockGroups.filter((g) => g.game_id === game.id && g.stage === "r1");
+    const r2g = data.crockGroups.filter((g) => g.game_id === game.id && g.stage === "r2");
+    const finals = data.crockFinals.filter((f) => f.game_id === game.id);
+    if (r1g.length === 0) return <MEmpty msg="Groups not set up yet" />;
+    const GL: Record<number, string> = { 1: "A", 2: "B", 3: "C", 4: "D" };
+    const sortG = (arr: typeof r1g) => [...arr].sort((a, b) => {
+      if (a.time_seconds === null) return 1;
+      if (b.time_seconds === null) return -1;
+      return a.time_seconds - b.time_seconds;
+    });
+    return (<>
+      {[1,2,3,4].map((gn) => {
+        const members = sortG(r1g.filter((g) => g.group_number === gn));
+        if (members.length === 0) return null;
+        return (<div key={gn}>
+          <MSec label={`R1 — Group ${GL[gn]}`} color={gn === 4 ? "text-amber-400" : "text-zinc-300"} />
+          {members.map((g, i) => <MRow key={g.id} rank={g.time_seconds !== null ? i+1 : null}
+            name={getName(g.contestant_id)} value={g.time_seconds !== null ? formatTime(g.time_seconds) : "–"}
+            badge={g.time_seconds !== null && i < 2 ? "→R2" : undefined} badgeColor="text-green-400" />)}
+        </div>);
+      })}
+      {r2g.length > 0 && [1,2].map((gn) => {
+        const members = sortG(r2g.filter((g) => g.group_number === gn));
+        if (members.length === 0) return null;
+        return (<div key={gn}>
+          <MSec label={`R2 — Group ${gn}`} color="text-blue-400" />
+          {members.map((g, i) => <MRow key={g.id} rank={g.time_seconds !== null ? i+1 : null}
+            name={getName(g.contestant_id)} value={g.time_seconds !== null ? formatTime(g.time_seconds) : "–"}
+            badge={g.time_seconds !== null ? (i < 2 ? "→Final" : "→5-8") : undefined}
+            badgeColor={i < 2 ? "text-green-400" : "text-zinc-500"} />)}
+        </div>);
+      })}
+      {(["final","consol_r2","consol_r1"] as const).map((stage, si) => {
+        const fs = finals.filter((f) => f.stage === stage && f.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
+        if (fs.length === 0) return null;
+        const baseRank = [1,5,9][si];
+        const label = ["🏆 Final — 1st–4th", "5th–8th", "9th–11th"][si];
+        const color = ["text-amber-400","text-zinc-400","text-zinc-500"][si];
+        return (<div key={stage}>
+          <MSec label={label} color={color} />
+          {fs.map((f, i) => <MRow key={f.id} rank={baseRank+i} name={getName(f.contestant_id)} value={formatTime(f.time_seconds!)} top={stage === "final" && i === 0} />)}
+        </div>);
+      })}
+    </>);
+  };
+
+  // ── Chessboard ──
+  const renderChess = () => {
+    const gamePlayers = data.teamPlayers.filter((p) => p.game_id === game.id);
+    const gameMatches = data.chessboardMatches.filter((m) => m.game_id === game.id);
+    if (gamePlayers.length === 0) return <MEmpty msg="Teams not set up yet" />;
+    const getTeamName = (t: number) => {
+      const ms = gamePlayers.filter((p) => p.team_number === t);
+      return ms.map((m) => getName(m.contestant_id)).join(" & ") || `Team ${t}`;
+    };
+    const activeTeams = new Set([1,2,3,4,5,6].filter((t) => gamePlayers.some((p) => p.team_number === t)));
+    const ranksMap = computeChessboardTeamRanks(game.id, data.chessboardMatches);
+    const pts = new Map<number,number>(), gf = new Map<number,number>(), ga = new Map<number,number>(), pl = new Map<number,number>();
+    for (const t of activeTeams) { pts.set(t,0); gf.set(t,0); ga.set(t,0); pl.set(t,0); }
+    for (const m of gameMatches.filter((m) => m.winner_team !== null)) {
+      const sa = m.score_a??0, sb = m.score_b??0;
+      gf.set(m.team_a,(gf.get(m.team_a)??0)+sa); ga.set(m.team_a,(ga.get(m.team_a)??0)+sb);
+      gf.set(m.team_b,(gf.get(m.team_b)??0)+sb); ga.set(m.team_b,(ga.get(m.team_b)??0)+sa);
+      pl.set(m.team_a,(pl.get(m.team_a)??0)+1); pl.set(m.team_b,(pl.get(m.team_b)??0)+1);
+      if (m.winner_team===1) pts.set(m.team_a,(pts.get(m.team_a)??0)+3);
+      else if (m.winner_team===2) pts.set(m.team_b,(pts.get(m.team_b)??0)+3);
+      else { pts.set(m.team_a,(pts.get(m.team_a)??0)+1); pts.set(m.team_b,(pts.get(m.team_b)??0)+1); }
+    }
+    const played = gameMatches.filter((m) => m.winner_team !== null).length;
+    const sorted = [...ranksMap.entries()].filter(([t]) => activeTeams.has(t)).sort((a,b) => a[1]-b[1]);
+    return (<>
+      <div className="px-4 py-2 text-xs text-zinc-500 border-b border-zinc-800/40">{played}/{CHESS_PAIRS.length} matches played</div>
+      <table className="w-full text-xs">
+        <thead><tr className="border-b border-zinc-800/50 text-zinc-500">
+          <th className="px-4 py-2 text-left w-6">#</th>
+          <th className="px-4 py-2 text-left">Team</th>
+          <th className="px-3 py-2 text-center">Pts</th>
+          <th className="px-3 py-2 text-center">GD</th>
+          <th className="px-3 py-2 text-center">P</th>
+        </tr></thead>
+        <tbody>
+          {sorted.map(([team, rank]) => {
+            const gd = (gf.get(team)??0)-(ga.get(team)??0);
+            return (<tr key={team} className={`border-b border-zinc-800/40 ${rank===1?"bg-amber-950/20":""}`}>
+              <td className="px-4 py-2 font-bold text-amber-400">{rank}</td>
+              <td className="px-4 py-2 text-zinc-200">{getTeamName(team)}</td>
+              <td className="px-3 py-2 text-center font-bold text-zinc-200">{pts.get(team)??0}</td>
+              <td className={`px-3 py-2 text-center ${gd>0?"text-green-400":gd<0?"text-red-400":"text-zinc-500"}`}>{gd>0?`+${gd}`:gd}</td>
+              <td className="px-3 py-2 text-center text-zinc-500">{pl.get(team)??0}</td>
+            </tr>);
+          })}
+        </tbody>
+      </table>
+      {played > 0 && (<>
+        <div className="px-4 py-2 text-xs font-semibold text-zinc-400 border-t border-zinc-800/50 mt-1">Results</div>
+        {CHESS_PAIRS.filter(([ta,tb]) => gameMatches.some((m)=>m.team_a===ta&&m.team_b===tb&&m.winner_team!==null)).map(([ta,tb]) => {
+          const m = gameMatches.find((m)=>m.team_a===ta&&m.team_b===tb)!;
+          return (<div key={`${ta}-${tb}`} className="flex items-center gap-2 px-4 py-1.5 border-b border-zinc-800/30 text-xs">
+            <span className="flex-1 text-zinc-300">{getTeamName(ta)} vs {getTeamName(tb)}</span>
+            <span className={`font-mono ${m.winner_team===0?"text-zinc-500":"text-amber-400"}`}>{m.score_a}–{m.score_b}</span>
+          </div>);
+        })}
+      </>)}
+    </>);
+  };
+
+  // ── Popp Koppen ──
+  const renderPopp = () => {
+    const gamePlayers = data.teamPlayers.filter((p) => p.game_id === game.id);
+    const gameRankings = data.teamRankings.filter((r) => r.game_id === game.id && r.rank !== null).sort((a,b) => a.rank!-b.rank!);
+    if (gamePlayers.length === 0) return <MEmpty msg="Teams not set up yet" />;
+    if (gameRankings.length === 0) return <MEmpty msg="Teams set — no results yet" />;
+    const getTeamName = (t: number) => gamePlayers.filter((p) => p.team_number === t).map((m) => getName(m.contestant_id)).join(" & ") || `Team ${t}`;
+    let pos = 1;
+    return (<>
+      {gameRankings.map((r) => {
+        const members = gamePlayers.filter((p) => p.team_number === r.team_number);
+        const startPos = pos; pos += members.length === 1 ? 1 : 2;
+        return (<div key={r.team_number} className={`flex items-center gap-3 px-4 py-2.5 border-b border-zinc-800/30 ${startPos===1?"bg-amber-950/20":""}`}>
+          <span className="text-xs font-bold text-amber-400 w-5 text-right shrink-0">{startPos}</span>
+          <span className="flex-1 text-sm text-zinc-200">{getTeamName(r.team_number)}</span>
+          {members.length === 1 && <span className="text-xs text-zinc-600">solo</span>}
+        </div>);
+      })}
+    </>);
+  };
+
+  const content = (() => {
+    if (game.game_type === "individual" || game.game_type === "individual_race") return renderIndividual();
+    if (game.game_type === "individual_points") return renderPoints();
+    if (game.game_type === "lives_bracket" || game.game_type === "lives_no_playoff") return renderLives();
+    if (game.game_type === "cup_format") return renderCup();
+    if (game.game_type === "team_chess") return renderChess();
+    if (game.game_type === "team_popp") return renderPopp();
+    return <MEmpty msg="No data" />;
+  })();
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm px-3 pb-3 pt-16"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-zinc-700 bg-zinc-950 shadow-2xl flex flex-col"
+        style={{ maxHeight: "82vh" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="bg-zinc-900 border-b border-zinc-800 px-4 py-3 flex items-center justify-between shrink-0 rounded-t-2xl">
+          <h2 className="font-bold text-amber-400 text-base">{game.name}</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white h-8 w-8 flex items-center justify-center text-xl rounded-full hover:bg-zinc-800 shrink-0">×</button>
+        </div>
+        <div className="overflow-y-auto rounded-b-2xl">{content}</div>
+      </div>
+    </div>
+  );
+}
+
 function LeaderboardPage() {
   const { user } = useAuth();
+  const [selectedGame, setSelectedGame] = useState<BLGame | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ["beerlympics"],
     queryFn: fetchAll,
@@ -227,7 +530,7 @@ function LeaderboardPage() {
                     {/* Sticky player column */}
                     <th className="sticky left-10 z-20 bg-zinc-900 px-3 py-3.5 text-left text-zinc-300 font-semibold min-w-[110px] border-r border-zinc-800/50">Player</th>
                     {data.games.map((g) => (
-                      <th key={g.id} className="px-2 py-3.5 text-center text-xs font-semibold text-zinc-400 whitespace-nowrap" title={g.name}>
+                      <th key={g.id} className="px-2 py-3.5 text-center text-xs font-semibold text-zinc-400 whitespace-nowrap cursor-pointer hover:text-amber-400 transition-colors" title={g.name} onClick={() => setSelectedGame(g)}>
                         {SHORT[g.name] ?? g.name.substring(0, 4).toUpperCase()}
                       </th>
                     ))}
@@ -339,10 +642,10 @@ function LeaderboardPage() {
                   }
 
                   return (
-                    <div key={g.id} className={`rounded-lg border px-3 py-2 text-center ${borderColor}`}>
+                    <button key={g.id} onClick={() => setSelectedGame(g)} className={`rounded-lg border px-3 py-2 text-center w-full transition-colors hover:border-zinc-600 hover:bg-zinc-900/60 active:bg-zinc-800/60 ${borderColor}`}>
                       <div className="text-xs font-semibold text-zinc-300 truncate">{g.name}</div>
                       <div className={`mt-0.5 text-[10px] ${statusColor}`}>{statusLabel}</div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
@@ -362,6 +665,14 @@ function LeaderboardPage() {
           </>
         )}
       </main>
+
+      {selectedGame && data && (
+        <GameProgressModal
+          game={selectedGame}
+          data={data}
+          onClose={() => setSelectedGame(null)}
+        />
+      )}
     </div>
   );
 }
