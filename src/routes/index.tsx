@@ -142,7 +142,7 @@ function LeaderboardPage() {
     ? computeLeaderboard(
         data.contestants, data.games, data.round1, data.round2, data.bonuses,
         data.teamPlayers, data.teamRankings, data.chessboardMatches,
-        data.livesStates, data.crockGroups,
+        data.livesStates, data.crockGroups, data.crockFinals,
       )
     : [];
 

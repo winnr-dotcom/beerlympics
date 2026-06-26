@@ -18,6 +18,10 @@ import {
   resetLivesGame,
   upsertCrockGroup,
   saveCrockAssignments,
+  saveCrockR2Assignments,
+  upsertCrockFinal,
+  deleteCrockFinal,
+  resetCrockGame,
 } from "@/lib/api";
 import {
   parseTime,
@@ -28,7 +32,7 @@ import {
   computeChessboardTeamRanks,
   CHESS_PAIRS,
 } from "@/lib/scoring";
-import type { Contestant, BLGame, BonusPoint, TeamGamePlayer, LivesGameState } from "@/lib/types";
+import type { Contestant, BLGame, BonusPoint, TeamGamePlayer, LivesGameState, CrockFinal } from "@/lib/types";
 
 const ADMIN_PASSWORD = "beerlympics2024";
 
@@ -156,22 +160,22 @@ function TimesTab({ data, onMutate }: { data: FetchAllResult; onMutate: () => vo
       </div>
 
       {game?.game_type === "individual" && (
-        <IndividualTimesPanel game={game} data={data} onMutate={onMutate} />
+        <IndividualTimesPanel key={game.id} game={game} data={data} onMutate={onMutate} />
       )}
       {game?.game_type === "individual_points" && (
-        <CanBaseballPanel game={game} data={data} onMutate={onMutate} />
+        <CanBaseballPanel key={game.id} game={game} data={data} onMutate={onMutate} />
       )}
       {game?.game_type === "lives_bracket" && (
-        <LivesPanel game={game} data={data} onMutate={onMutate} />
+        <LivesPanel key={game.id} game={game} data={data} onMutate={onMutate} />
       )}
       {game?.game_type === "cup_format" && (
-        <CupFormatPanel game={game} data={data} onMutate={onMutate} />
+        <CupFormatPanel key={game.id} game={game} data={data} onMutate={onMutate} />
       )}
       {game?.game_type === "team_popp" && (
-        <PoppKoppenPanel game={game} data={data} onMutate={onMutate} />
+        <PoppKoppenPanel key={game.id} game={game} data={data} onMutate={onMutate} />
       )}
       {game?.game_type === "team_chess" && (
-        <ChessboardPanel game={game} data={data} onMutate={onMutate} />
+        <ChessboardPanel key={game.id} game={game} data={data} onMutate={onMutate} />
       )}
     </div>
   );
@@ -494,6 +498,7 @@ function TeamsSetup({ game, data, onMutate }: { game: BLGame; data: FetchAllResu
   const leaderboard = computeLeaderboard(
     data.contestants, data.games, data.round1, data.round2, data.bonuses,
     data.teamPlayers, data.teamRankings, data.chessboardMatches,
+    data.livesStates, data.crockGroups, data.crockFinals,
   );
   const ranked = leaderboard.map((r) => r.contestant);
   const existingPlayers = data.teamPlayers.filter((p) => p.game_id === game.id);
@@ -985,7 +990,7 @@ function ChessMatchRow({ gameId, teamA, teamB, aMembers, bMembers, existing, get
 function LivesPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
   const [subTab, setSubTab] = useState<"lives" | "playoffs">("lives");
   const states = data.livesStates.filter((s) => s.game_id === game.id);
-  const { bracketA } = getLivesBrackets(game.id, data.livesStates);
+  const { bracketA, bracketB } = getLivesBrackets(game.id, data.livesStates);
   const r2ForGame = data.round2.filter((r) => r.game_id === game.id);
 
   const eliminated = states.filter((s) => s.eliminated_order !== null).sort((a, b) => a.eliminated_order! - b.eliminated_order!);
@@ -1042,7 +1047,7 @@ function LivesPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResu
           <button key={t} onClick={() => setSubTab(t)}
             className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors touch-manipulation ${subTab === t ? "bg-zinc-200 text-zinc-900" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}`}
             style={{ WebkitTapHighlightColor: "transparent" }}>
-            {t === "lives" ? "❤️ Lives" : "🏆 Playoffs (Top 6)"}
+            {t === "lives" ? "❤️ Lives" : "🏆 Playoffs"}
           </button>
         ))}
         <button onClick={() => { if (confirm("Reset lives game?")) handleInit(); }}
@@ -1101,25 +1106,51 @@ function LivesPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResu
           {bracketA.length < 6 ? (
             <p className="text-xs text-zinc-600 text-center py-4">Eliminate 5 players first to unlock playoffs</p>
           ) : (
-            <div className="space-y-1">
-              <p className="text-xs text-zinc-500 mb-3">Enter playoff times for the 6 survivors (lower = better)</p>
-              {bracketA.map((cid) => {
-                const c = data.contestants.find((x) => x.id === cid)!;
-                if (!c) return null;
-                return (
-                  <TimeRow key={cid} contestant={c} gameId={game.id} round="r2"
-                    existing={r2ForGame.find((r) => r.contestant_id === cid)?.time_seconds ?? null}
-                    bracket="A"
-                    onSave={async (secs) => {
-                      const { error } = await upsertRound2(c.id, game.id, secs);
-                      if (error) { toast.error("Save failed"); return; }
-                      toast.success(`Saved — ${c.nickname ?? c.full_name.split(" ")[0]}`);
-                      onMutate();
-                    }}
-                    onDelete={async () => { await deleteRound2(c.id, game.id); onMutate(); }}
-                  />
-                );
-              })}
+            <div className="space-y-4">
+              <div>
+                <p className="text-xs font-semibold text-green-400 mb-2">🏆 Top 6 — positions 1-6 (lower = better)</p>
+                <div className="space-y-1">
+                  {bracketA.map((cid) => {
+                    const c = data.contestants.find((x) => x.id === cid)!;
+                    if (!c) return null;
+                    return (
+                      <TimeRow key={cid} contestant={c} gameId={game.id} round="r2"
+                        existing={r2ForGame.find((r) => r.contestant_id === cid)?.time_seconds ?? null}
+                        bracket="A"
+                        onSave={async (secs) => {
+                          const { error } = await upsertRound2(c.id, game.id, secs);
+                          if (error) { toast.error("Save failed"); return; }
+                          toast.success(`Saved — ${c.nickname ?? c.full_name.split(" ")[0]}`);
+                          onMutate();
+                        }}
+                        onDelete={async () => { await deleteRound2(c.id, game.id); onMutate(); }}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-zinc-400 mb-2">Bottom 5 — positions 7-11 (lower = better)</p>
+                <div className="space-y-1">
+                  {bracketB.map((cid) => {
+                    const c = data.contestants.find((x) => x.id === cid)!;
+                    if (!c) return null;
+                    return (
+                      <TimeRow key={cid} contestant={c} gameId={game.id} round="r2"
+                        existing={r2ForGame.find((r) => r.contestant_id === cid)?.time_seconds ?? null}
+                        bracket="B"
+                        onSave={async (secs) => {
+                          const { error } = await upsertRound2(c.id, game.id, secs);
+                          if (error) { toast.error("Save failed"); return; }
+                          toast.success(`Saved — ${c.nickname ?? c.full_name.split(" ")[0]}`);
+                          onMutate();
+                        }}
+                        onDelete={async () => { await deleteRound2(c.id, game.id); onMutate(); }}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           )}
         </>
@@ -1129,85 +1160,192 @@ function LivesPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResu
 }
 
 // ──────────────────────────────────────────────────────────────
-// Cup format panel (Crock it)
+// Cup format panel (Crock it) — multi-round tournament
+// R1: 4 groups (A,B,C=3 players; D=2+wildcard from A/B best 3rd)
+// R2: 2 groups of 4 — top 2 → Final; bottom 2 → R2 Consolation
+// Finals: positions 1-4 | R2 Consol: 5-8 | R1 Consol: 9-11
 // ──────────────────────────────────────────────────────────────
 
-const CROCK_GROUP_LABELS: Record<number, string> = { 1: "Group A", 2: "Group B", 3: "Group C", 4: "Group D", 5: "Wildcard" };
+const CROCK_GROUP_LABELS: Record<number, string> = {
+  1: "Group A", 2: "Group B", 3: "Group C", 4: "Group D",
+};
+
+function CrockFinalRow({
+  contestant, gameId, stage, existing, onMutate,
+}: {
+  contestant: Contestant;
+  gameId: string;
+  stage: CrockFinal["stage"];
+  existing: number | null;
+  onMutate: () => void;
+}) {
+  const [val, setVal] = useState(existing !== null ? formatTime(existing) : "");
+  const [saving, setSaving] = useState(false);
+  const isDirty = val.trim() !== (existing !== null ? formatTime(existing) : "");
+  const name = contestant.nickname ?? contestant.full_name.split(" ")[0];
+
+  async function handleSave() {
+    const secs = parseTime(val);
+    if (secs === null) { toast.error("Invalid time"); return; }
+    setSaving(true);
+    const { error } = await upsertCrockFinal(contestant.id, gameId, stage, secs);
+    setSaving(false);
+    if (error) { toast.error("Save failed"); return; }
+    toast.success(`Saved — ${name}`);
+    onMutate();
+  }
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-2">
+      <span className="flex-1 text-sm text-zinc-300 truncate">{name}</span>
+      <input
+        value={val} onChange={(e) => setVal(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
+        placeholder="45.321" inputMode="decimal"
+        className="w-28 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none tabular-nums"
+      />
+      {isDirty && (
+        <button onClick={handleSave} disabled={saving}
+          className="rounded-lg bg-amber-500 px-3 py-2.5 text-xs font-semibold text-black hover:bg-amber-400 disabled:opacity-40 touch-manipulation"
+          style={{ WebkitTapHighlightColor: "transparent" }}>
+          {saving ? "…" : "Save"}
+        </button>
+      )}
+      {!isDirty && existing !== null && (
+        <button onClick={async () => { await deleteCrockFinal(contestant.id, gameId, stage); onMutate(); }}
+          className="px-2 text-xs text-zinc-600 hover:text-red-400 touch-manipulation">×</button>
+      )}
+    </div>
+  );
+}
 
 function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
-  const [subTab, setSubTab] = useState<"groups" | "knockout">("groups");
-  const gameGroups = data.crockGroups.filter((g) => g.game_id === game.id);
-  const r2ForGame = data.round2.filter((r) => r.game_id === game.id);
+  const [subTab, setSubTab] = useState<"r1" | "r2" | "finals">("r1");
+  const r1Groups = data.crockGroups.filter((g) => g.game_id === game.id && g.stage === "r1");
+  const r2Groups = data.crockGroups.filter((g) => g.game_id === game.id && g.stage === "r2");
+  const gameFinals = data.crockFinals.filter((f) => f.game_id === game.id);
 
   const getName = (id: string) => {
     const c = data.contestants.find((x) => x.id === id);
     return c ? (c.nickname ?? c.full_name.split(" ")[0]) : "?";
   };
 
-  // Which players are unassigned?
-  const assignedIds = new Set(gameGroups.map((g) => g.contestant_id));
-  const unassigned = data.contestants.filter((c) => !assignedIds.has(c.id));
-
-  async function handleAssign(contestantId: string, groupNumber: number) {
-    await upsertCrockGroup(game.id, contestantId, groupNumber, null, null);
-    onMutate();
+  // ── R1 qualifier logic ────────────────────────────────────────
+  const r1Grouped = new Map<number, typeof r1Groups>();
+  for (const g of r1Groups) {
+    if (!r1Grouped.has(g.group_number)) r1Grouped.set(g.group_number, []);
+    r1Grouped.get(g.group_number)!.push(g);
   }
-
-  async function handleClearAssignments() {
-    if (!confirm("Clear all group assignments?")) return;
-    await saveCrockAssignments(game.id, []);
-    onMutate();
-  }
-
-  // Determine qualifiers: top 2 per group + best 3rd
-  const grouped = new Map<number, typeof gameGroups>([1, 2, 3, 4].map((n) => [n, []]));
-  for (const g of gameGroups) {
-    if (g.group_number <= 4) grouped.get(g.group_number)?.push(g);
-  }
-  const qualifierIds = new Set<string>();
-  const thirds: typeof gameGroups = [];
-  for (const [, members] of grouped) {
+  const r1Qualifiers = new Set<string>();
+  for (const [, members] of r1Grouped) {
     const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
-    sorted.slice(0, 2).forEach((m) => qualifierIds.add(m.contestant_id));
-    if (sorted[2]) thirds.push(sorted[2]);
+    sorted.slice(0, 2).forEach((m) => r1Qualifiers.add(m.contestant_id));
   }
-  if (thirds.length > 0) {
-    const bestThird = [...thirds].sort((a, b) => a.time_seconds! - b.time_seconds!)[0];
-    qualifierIds.add(bestThird.contestant_id);
+  for (const g of r1Groups) {
+    if (g.advances === true) r1Qualifiers.add(g.contestant_id);
+    if (g.advances === false) r1Qualifiers.delete(g.contestant_id);
   }
-  // Override with manual advances flags
-  for (const g of gameGroups) {
-    if (g.advances === true) qualifierIds.add(g.contestant_id);
-    if (g.advances === false) qualifierIds.delete(g.contestant_id);
+  // Unique players seen in R1 (wildcard may appear in two groups)
+  const r1Seen = new Set(r1Groups.map((g) => g.contestant_id));
+  const r1NonQualifiers = [...r1Seen].filter((id) => !r1Qualifiers.has(id));
+
+  // Wildcard: best 3rd from groups A(1) and B(2) only
+  const abThirds: typeof r1Groups = [];
+  for (const gn of [1, 2]) {
+    const members = r1Grouped.get(gn) ?? [];
+    const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
+    if (sorted[2]) abThirds.push(sorted[2]);
+  }
+  const wildcardEntry = abThirds.length > 0
+    ? abThirds.sort((a, b) => a.time_seconds! - b.time_seconds!)[0]
+    : null;
+  const wildcardInD = wildcardEntry
+    ? r1Groups.find((g) => g.contestant_id === wildcardEntry.contestant_id && g.group_number === 4)
+    : null;
+
+  // R1 unassigned (not in any R1 group)
+  const r1AssignedIds = new Set(r1Groups.map((g) => g.contestant_id));
+  const unassigned = data.contestants.filter((c) => !r1AssignedIds.has(c.id));
+
+  // ── R2 qualifier logic ────────────────────────────────────────
+  const r2Grouped = new Map<number, typeof r2Groups>();
+  for (const g of r2Groups) {
+    if (!r2Grouped.has(g.group_number)) r2Grouped.set(g.group_number, []);
+    r2Grouped.get(g.group_number)!.push(g);
+  }
+  const r2FinalQuals = new Set<string>();
+  const r2ConsolQuals = new Set<string>();
+  for (const [, members] of r2Grouped) {
+    const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
+    sorted.slice(0, 2).forEach((m) => r2FinalQuals.add(m.contestant_id));
+    sorted.slice(2).forEach((m) => r2ConsolQuals.add(m.contestant_id));
+  }
+
+  // Players already assigned to R2 groups
+  const r2AssignedIds = new Set(r2Groups.map((g) => g.contestant_id));
+  const r1QualUnassigned = [...r1Qualifiers].filter((id) => !r2AssignedIds.has(id));
+
+  async function handleR1Assign(contestantId: string, groupNumber: number) {
+    await upsertCrockGroup(game.id, contestantId, groupNumber, null, null, "r1");
+    onMutate();
+  }
+
+  async function handleAddWildcard() {
+    if (!wildcardEntry) return;
+    await upsertCrockGroup(game.id, wildcardEntry.contestant_id, 4, null, null, "r1");
+    onMutate();
+  }
+
+  async function handleR2Assign(contestantId: string, groupNumber: number) {
+    const existing = r2Groups.find((g) => g.contestant_id === contestantId);
+    if (existing) {
+      await upsertCrockGroup(game.id, contestantId, groupNumber, existing.time_seconds, existing.advances, "r2");
+    } else {
+      await upsertCrockGroup(game.id, contestantId, groupNumber, null, null, "r2");
+    }
+    onMutate();
+  }
+
+  async function handleReset() {
+    if (!confirm("Reset entire Crock it tournament? All times and assignments will be cleared.")) return;
+    await resetCrockGame(game.id);
+    onMutate();
   }
 
   return (
     <div>
       <div className="mb-4 flex gap-2">
-        {(["groups", "knockout"] as const).map((t) => (
+        {(["r1", "r2", "finals"] as const).map((t) => (
           <button key={t} onClick={() => setSubTab(t)}
-            className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors touch-manipulation ${subTab === t ? "bg-zinc-200 text-zinc-900" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}`}
+            className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors touch-manipulation ${subTab === t ? "bg-zinc-200 text-zinc-900" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}`}
             style={{ WebkitTapHighlightColor: "transparent" }}>
-            {t === "groups" ? "🏟 Groups" : "⚡ Knockout"}
+            {t === "r1" ? "R1 Groups" : t === "r2" ? "R2 Groups" : "Finals"}
           </button>
         ))}
+        <button onClick={handleReset}
+          className="rounded-lg border border-zinc-700 px-3 py-2.5 text-xs text-zinc-600 hover:text-red-400 touch-manipulation shrink-0"
+          style={{ WebkitTapHighlightColor: "transparent" }}>
+          Reset
+        </button>
       </div>
 
-      {subTab === "groups" && (
+      {/* ── R1 Groups tab ─────────────────────────────────────── */}
+      {subTab === "r1" && (
         <div>
-          {/* Assign unassigned */}
+          {/* Assign unassigned players */}
           {unassigned.length > 0 && (
             <div className="mb-4 rounded-xl border border-amber-900/50 bg-amber-950/20 p-4">
-              <p className="text-xs font-semibold text-amber-300 mb-3">Assign players to groups</p>
+              <p className="text-xs font-semibold text-amber-300 mb-1">Assign players to R1 groups</p>
+              <p className="text-xs text-zinc-500 mb-3">A, B, C: 3 players each · D: 2 players (+ wildcard from A/B)</p>
               <div className="space-y-2">
                 {unassigned.map((c) => (
                   <div key={c.id} className="flex items-center gap-2">
                     <span className="flex-1 text-sm text-zinc-300">{getName(c.id)}</span>
-                    {[1, 2, 3, 4].map((g) => (
-                      <button key={g} onClick={() => handleAssign(c.id, g)}
+                    {[1, 2, 3, 4].map((gn) => (
+                      <button key={gn} onClick={() => handleR1Assign(c.id, gn)}
                         className="rounded-lg bg-zinc-800 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-amber-500 hover:text-black touch-manipulation"
                         style={{ WebkitTapHighlightColor: "transparent" }}>
-                        {String.fromCharCode(64 + g)}
+                        {String.fromCharCode(64 + gn)}
                       </button>
                     ))}
                   </div>
@@ -1216,11 +1354,12 @@ function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAll
             </div>
           )}
 
-          {/* Groups with time entry */}
+          {/* Groups A, B, C, D with time entry */}
           {[1, 2, 3, 4].map((gn) => {
-            const members = gameGroups.filter((g) => g.group_number === gn);
-            if (members.length === 0) return null;
+            const members = r1Groups.filter((g) => g.group_number === gn);
+            if (members.length === 0 && gn !== 4) return null;
             const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
+            const isGroupD = gn === 4;
             return (
               <div key={gn} className="mb-4 rounded-xl border border-zinc-800 overflow-hidden">
                 <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800 flex items-center justify-between">
@@ -1228,86 +1367,227 @@ function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAll
                   <span className="text-xs text-zinc-500">{members.length} players · top 2 advance</span>
                 </div>
                 <div className="divide-y divide-zinc-800/40">
-                  {members.map((g, i) => {
-                    const isQ = sorted.indexOf(g) < 2 && g.time_seconds !== null;
-                    const c = data.contestants.find((x) => x.id === g.contestant_id)!;
+                  {members.map((g) => {
+                    const rank = sorted.indexOf(g);
+                    const isQ = rank < 2 && g.time_seconds !== null;
+                    const isWild = g.contestant_id === wildcardEntry?.contestant_id && isGroupD;
                     return (
                       <div key={g.id} className="flex items-center gap-3 px-4 py-2">
                         <span className={`text-xs w-4 font-bold ${isQ ? "text-green-400" : "text-zinc-600"}`}>
-                          {g.time_seconds !== null ? (sorted.indexOf(g) + 1) : "–"}
+                          {g.time_seconds !== null ? rank + 1 : "–"}
                         </span>
-                        <span className="w-24 text-sm text-zinc-300 truncate">{getName(g.contestant_id)}</span>
+                        <span className="w-20 text-sm text-zinc-300 truncate">
+                          {getName(g.contestant_id)}
+                          {isWild && <span className="ml-1 text-amber-400 text-[10px]">★WC</span>}
+                        </span>
                         <input
                           defaultValue={g.time_seconds !== null ? formatTime(g.time_seconds) : ""}
-                          placeholder="e.g. 45.321" inputMode="decimal"
+                          placeholder="45.321" inputMode="decimal"
                           className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none tabular-nums"
                           onBlur={async (e) => {
                             const secs = parseTime(e.target.value);
                             if (secs === null) return;
-                            await upsertCrockGroup(game.id, g.contestant_id, gn, secs, g.advances);
+                            await upsertCrockGroup(game.id, g.contestant_id, gn, secs, g.advances, "r1");
                             onMutate();
                           }}
                         />
-                        {isQ && <span className="text-xs text-green-400 shrink-0">→ KO</span>}
+                        {isQ && <span className="text-xs text-green-400 shrink-0">→ R2</span>}
                       </div>
                     );
                   })}
                 </div>
+                {/* Wildcard section inside Group D */}
+                {isGroupD && wildcardEntry && !wildcardInD && (
+                  <div className="px-4 py-3 border-t border-zinc-800/60 bg-amber-950/10">
+                    <p className="text-xs text-amber-300 mb-2">
+                      ★ Wildcard available: <span className="font-semibold">{getName(wildcardEntry.contestant_id)}</span>
+                      {" "}(best 3rd from A/B · {formatTime(wildcardEntry.time_seconds!)})
+                    </p>
+                    <button onClick={handleAddWildcard}
+                      className="rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-black hover:bg-amber-400 touch-manipulation"
+                      style={{ WebkitTapHighlightColor: "transparent" }}>
+                      Add to Group D
+                    </button>
+                  </div>
+                )}
+                {isGroupD && members.length === 0 && !wildcardEntry && (
+                  <div className="px-4 py-3 text-xs text-zinc-600">
+                    Enter Group A and B times first to unlock the wildcard slot
+                  </div>
+                )}
               </div>
             );
           })}
 
-          {gameGroups.length > 0 && (
-            <button onClick={handleClearAssignments}
+          {r1Groups.length > 0 && (
+            <button onClick={async () => { if (confirm("Clear R1 assignments?")) { await saveCrockAssignments(game.id, []); onMutate(); } }}
               className="mt-2 w-full rounded-lg border border-zinc-800 py-2 text-xs text-zinc-600 hover:text-red-400 touch-manipulation">
-              Clear all assignments
+              Clear R1 assignments
             </button>
           )}
         </div>
       )}
 
-      {subTab === "knockout" && (
+      {/* ── R2 Groups tab ─────────────────────────────────────── */}
+      {subTab === "r2" && (
         <div>
-          {qualifierIds.size === 0 ? (
-            <p className="text-xs text-zinc-600 text-center py-4">Enter group times first to see qualifiers</p>
+          {r1Qualifiers.size === 0 ? (
+            <p className="text-xs text-zinc-600 text-center py-4">Complete R1 groups first to see qualifiers</p>
           ) : (
-            <div>
-              <p className="text-xs text-zinc-500 mb-3">{qualifierIds.size} qualifiers — enter knockout times (lower = better)</p>
-              <div className="space-y-1">
-                {[...qualifierIds].map((cid) => {
+            <>
+              {r1QualUnassigned.length > 0 && (
+                <div className="mb-4 rounded-xl border border-amber-900/50 bg-amber-950/20 p-4">
+                  <p className="text-xs font-semibold text-amber-300 mb-3">
+                    Assign {r1Qualifiers.size} R1 qualifiers to R2 groups (4 each)
+                  </p>
+                  <div className="space-y-2">
+                    {r1QualUnassigned.map((cid) => (
+                      <div key={cid} className="flex items-center gap-2">
+                        <span className="flex-1 text-sm text-zinc-300">{getName(cid)}</span>
+                        {[1, 2].map((gn) => (
+                          <button key={gn} onClick={() => handleR2Assign(cid, gn)}
+                            className="rounded-lg bg-zinc-800 px-4 py-2 text-xs font-semibold text-zinc-300 hover:bg-amber-500 hover:text-black touch-manipulation"
+                            style={{ WebkitTapHighlightColor: "transparent" }}>
+                            R2-{gn}
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {[1, 2].map((gn) => {
+                const members = r2Groups.filter((g) => g.group_number === gn);
+                if (members.length === 0) return null;
+                const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
+                return (
+                  <div key={gn} className="mb-4 rounded-xl border border-zinc-800 overflow-hidden">
+                    <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-zinc-300">R2 Group {gn}</span>
+                      <span className="text-xs text-zinc-500">top 2 → Final · bottom 2 → Consolation</span>
+                    </div>
+                    <div className="divide-y divide-zinc-800/40">
+                      {members.map((g) => {
+                        const rank = sorted.indexOf(g);
+                        const isF = rank < 2 && g.time_seconds !== null;
+                        const isC = rank >= 2 && g.time_seconds !== null;
+                        return (
+                          <div key={g.id} className="flex items-center gap-3 px-4 py-2">
+                            <span className={`text-xs w-4 font-bold ${isF ? "text-green-400" : isC ? "text-zinc-500" : "text-zinc-700"}`}>
+                              {g.time_seconds !== null ? rank + 1 : "–"}
+                            </span>
+                            <span className="w-20 text-sm text-zinc-300 truncate">{getName(g.contestant_id)}</span>
+                            <input
+                              defaultValue={g.time_seconds !== null ? formatTime(g.time_seconds) : ""}
+                              placeholder="45.321" inputMode="decimal"
+                              className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none tabular-nums"
+                              onBlur={async (e) => {
+                                const secs = parseTime(e.target.value);
+                                if (secs === null) return;
+                                await upsertCrockGroup(game.id, g.contestant_id, gn, secs, g.advances, "r2");
+                                onMutate();
+                              }}
+                            />
+                            {isF && <span className="text-xs text-green-400 shrink-0">→ Final</span>}
+                            {isC && <span className="text-xs text-zinc-500 shrink-0">→ 5-8</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {r2Groups.length > 0 && (
+                <button onClick={async () => { if (confirm("Clear R2 assignments?")) { await saveCrockR2Assignments(game.id, []); onMutate(); } }}
+                  className="mt-2 w-full rounded-lg border border-zinc-800 py-2 text-xs text-zinc-600 hover:text-red-400 touch-manipulation">
+                  Clear R2 assignments
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Finals tab ────────────────────────────────────────── */}
+      {subTab === "finals" && (
+        <div className="space-y-4">
+          {/* Final: positions 1-4 */}
+          {(() => {
+            const finalPlayers = [...r2FinalQuals].map((id) => data.contestants.find((c) => c.id === id)).filter(Boolean) as Contestant[];
+            const unplacedFinalPlayers = finalPlayers.length === 0 && r2Groups.length > 0 ? [] : finalPlayers;
+            const label = finalPlayers.length > 0 ? `Final — positions 1-4 (${finalPlayers.length} players)` : "Final — positions 1-4";
+            return (
+              <div className="rounded-xl border border-zinc-800 overflow-hidden">
+                <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800">
+                  <span className="text-xs font-semibold text-amber-400">🏆 {label}</span>
+                </div>
+                {r2FinalQuals.size === 0 ? (
+                  <p className="px-4 py-3 text-xs text-zinc-600">Complete R2 groups first</p>
+                ) : (
+                  <div className="divide-y divide-zinc-800/40">
+                    {[...r2FinalQuals].map((cid) => {
+                      const c = data.contestants.find((x) => x.id === cid)!;
+                      if (!c) return null;
+                      return (
+                        <CrockFinalRow key={cid} contestant={c} gameId={game.id} stage="final"
+                          existing={gameFinals.find((f) => f.contestant_id === cid && f.stage === "final")?.time_seconds ?? null}
+                          onMutate={onMutate}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* R2 Consolation: positions 5-8 */}
+          <div className="rounded-xl border border-zinc-800 overflow-hidden">
+            <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800">
+              <span className="text-xs font-semibold text-zinc-300">R2 Consolation — positions 5-8</span>
+            </div>
+            {r2ConsolQuals.size === 0 ? (
+              <p className="px-4 py-3 text-xs text-zinc-600">Complete R2 groups first</p>
+            ) : (
+              <div className="divide-y divide-zinc-800/40">
+                {[...r2ConsolQuals].map((cid) => {
                   const c = data.contestants.find((x) => x.id === cid)!;
                   if (!c) return null;
                   return (
-                    <TimeRow key={cid} contestant={c} gameId={game.id} round="r2"
-                      existing={r2ForGame.find((r) => r.contestant_id === cid)?.time_seconds ?? null}
-                      bracket="A"
-                      onSave={async (secs) => {
-                        const { error } = await upsertRound2(c.id, game.id, secs);
-                        if (error) { toast.error("Save failed"); return; }
-                        toast.success(`KO saved — ${c.nickname ?? c.full_name.split(" ")[0]}`);
-                        onMutate();
-                      }}
-                      onDelete={async () => { await deleteRound2(c.id, game.id); onMutate(); }}
+                    <CrockFinalRow key={cid} contestant={c} gameId={game.id} stage="consol_r2"
+                      existing={gameFinals.find((f) => f.contestant_id === cid && f.stage === "consol_r2")?.time_seconds ?? null}
+                      onMutate={onMutate}
                     />
                   );
                 })}
               </div>
-              <div className="mt-4 rounded-lg border border-zinc-800 p-3">
-                <p className="text-xs text-zinc-500">Non-qualifiers (positions {qualifierIds.size + 1}–11)</p>
-                <div className="mt-2 space-y-1">
-                  {data.contestants.filter((c) => !qualifierIds.has(c.id)).map((c) => {
-                    const grp = gameGroups.find((g) => g.contestant_id === c.id);
-                    return (
-                      <div key={c.id} className="flex justify-between text-xs text-zinc-500">
-                        <span>{getName(c.id)}</span>
-                        <span>{grp?.time_seconds !== null ? formatTime(grp?.time_seconds ?? 0) : "–"}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+            )}
+          </div>
+
+          {/* R1 Consolation: positions 9-11 */}
+          <div className="rounded-xl border border-zinc-800 overflow-hidden">
+            <div className="bg-zinc-900/50 px-4 py-2 border-b border-zinc-800">
+              <span className="text-xs font-semibold text-zinc-500">R1 Consolation — positions 9-11</span>
             </div>
-          )}
+            {r1NonQualifiers.length === 0 ? (
+              <p className="px-4 py-3 text-xs text-zinc-600">Complete R1 groups first</p>
+            ) : (
+              <div className="divide-y divide-zinc-800/40">
+                {r1NonQualifiers.map((cid) => {
+                  const c = data.contestants.find((x) => x.id === cid)!;
+                  if (!c) return null;
+                  return (
+                    <CrockFinalRow key={cid} contestant={c} gameId={game.id} stage="consol_r1"
+                      existing={gameFinals.find((f) => f.contestant_id === cid && f.stage === "consol_r1")?.time_seconds ?? null}
+                      onMutate={onMutate}
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

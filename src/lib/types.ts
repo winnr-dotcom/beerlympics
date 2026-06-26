@@ -91,9 +91,19 @@ export type CrockGroup = {
   id: string;
   game_id: string;
   contestant_id: string;
-  group_number: number; // 1-4 initial, 5=wildcard
+  group_number: number; // R1: 1=A,2=B,3=C,4=D; R2: 1=R2-Group1,2=R2-Group2
+  stage: "r1" | "r2";
   time_seconds: number | null;
   advances: boolean | null;
+  updated_at: string;
+};
+
+export type CrockFinal = {
+  id: string;
+  game_id: string;
+  contestant_id: string;
+  stage: "final" | "consol_r2" | "consol_r1";
+  time_seconds: number | null;
   updated_at: string;
 };
 

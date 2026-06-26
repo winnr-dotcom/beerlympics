@@ -9,6 +9,7 @@ import type {
   ChessboardMatch,
   LivesGameState,
   CrockGroup,
+  CrockFinal,
   GameResult,
   LeaderboardRow,
 } from "./types";
@@ -123,36 +124,40 @@ export function computeLivesGameResults(
     return out;
   }
 
-  // Eliminated players: order 1=last place (pos 11), order N=position (12-N)
   const eliminated = states.filter((s) => s.eliminated_order !== null)
     .sort((a, b) => a.eliminated_order! - b.eliminated_order!);
   const alive = states.filter((s) => s.eliminated_order === null)
-    .sort((a, b) => b.current_lives - a.current_lives); // more lives = better bracket seed
+    .sort((a, b) => b.current_lives - a.current_lives);
 
-  // Positions 7-11 from elimination (no round 2 needed for these)
-  eliminated.forEach((s, i) => {
-    const rank = 11 - i; // first eliminated = rank 11
-    out[s.contestant_id] = { points: POINTS[rank] ?? 0, isProvisional: eliminated.length < 5, rank };
+  const aliveIds = new Set(alive.map((s) => s.contestant_id));
+  const r2alive = r2.filter((r) => aliveIds.has(r.contestant_id)).sort((a, b) => a.time_seconds - b.time_seconds);
+  const r2elim  = r2.filter((r) => !aliveIds.has(r.contestant_id)).sort((a, b) => a.time_seconds - b.time_seconds);
+
+  // Positions 1-6: round2 times for survivors (provisional by lives if no round2)
+  r2alive.forEach((r, i) => {
+    out[r.contestant_id] = { points: POINTS[i + 1] ?? 0, isProvisional: false, rank: i + 1 };
+  });
+  alive.forEach((s, i) => {
+    if (!out[s.contestant_id]) {
+      out[s.contestant_id] = { points: POINTS[i + 1] ?? 0, isProvisional: true, rank: i + 1 };
+    }
   });
 
-  // Positions 1-6 from round 2 (playoffs among survivors)
-  if (r2.length > 0) {
-    // Top 6 survivors sorted by round2 time
-    const aliveIds = new Set(alive.map((s) => s.contestant_id));
-    const r2alive = r2.filter((r) => aliveIds.has(r.contestant_id)).sort((a, b) => a.time_seconds - b.time_seconds);
-    r2alive.forEach((r, i) => {
-      out[r.contestant_id] = { points: POINTS[i + 1] ?? 0, isProvisional: false, rank: i + 1 };
+  // Positions 7-11: round2 times if entered, else elimination order
+  if (r2elim.length > 0) {
+    r2elim.forEach((r, i) => {
+      out[r.contestant_id] = { points: POINTS[i + 7] ?? 0, isProvisional: false, rank: i + 7 };
     });
-    // Still-alive players not in round 2 yet: provisional by lives
-    alive.forEach((s, i) => {
+    eliminated.forEach((s) => {
       if (!out[s.contestant_id]) {
-        out[s.contestant_id] = { points: POINTS[i + 1] ?? 0, isProvisional: true, rank: i + 1 };
+        const rank = 11 - eliminated.indexOf(s);
+        out[s.contestant_id] = { points: POINTS[rank] ?? 0, isProvisional: true, rank };
       }
     });
   } else {
-    // No playoffs yet: provisional by lives count
-    alive.forEach((s, i) => {
-      out[s.contestant_id] = { points: POINTS[i + 1] ?? 0, isProvisional: true, rank: i + 1 };
+    eliminated.forEach((s, i) => {
+      const rank = 11 - i;
+      out[s.contestant_id] = { points: POINTS[rank] ?? 0, isProvisional: eliminated.length < 5, rank };
     });
   }
 
@@ -163,83 +168,110 @@ export function computeLivesGameResults(
 }
 
 // ── Crock it cup format ────────────────────────────────────────
-// Group stage → top 2 per group advance + best 3rd (wildcard)
-// Knockout in round2_results
+// R1: 4 groups (A=1,B=2,C=3,D=4); top 2 from each advance (wildcard in D)
+// R2: 2 groups of 4; top 2 → Final; bottom 2 → R2 Consolation (pos 5-8)
+// Final: positions 1-4 | R1 Consolation: 3 R1 losers for positions 9-11
 
 export function computeCupGameResults(
   gameId: string,
   contestants: Contestant[],
   crockGroups: CrockGroup[],
-  round2: Round2Result[],
+  crockFinals: CrockFinal[],
 ): Record<string, GameResult> {
-  const groups = crockGroups.filter((g) => g.game_id === gameId);
-  const r2 = round2.filter((r) => r.game_id === gameId);
+  const r1Groups = crockGroups.filter((g) => g.game_id === gameId && g.stage === "r1");
+  const r2Groups = crockGroups.filter((g) => g.game_id === gameId && g.stage === "r2");
+  const finals   = crockFinals.filter((f) => f.game_id === gameId && f.stage === "final");
+  const consolR2 = crockFinals.filter((f) => f.game_id === gameId && f.stage === "consol_r2");
+  const consolR1 = crockFinals.filter((f) => f.game_id === gameId && f.stage === "consol_r1");
   const out: Record<string, GameResult> = {};
 
-  if (groups.length === 0) {
+  if (r1Groups.length === 0) {
     for (const c of contestants) out[c.id] = { points: null, isProvisional: false, rank: null };
     return out;
   }
 
-  // Determine who advanced (from groups with advances=true, or compute if not set)
-  const qualifiers = new Set<string>();
-  const nonQualifiers: string[] = [];
-
-  const grouped = new Map<number, CrockGroup[]>();
-  for (const g of groups) {
-    if (!grouped.has(g.group_number)) grouped.set(g.group_number, []);
-    grouped.get(g.group_number)!.push(g);
-  }
-
-  // If advances flags are set, use them
-  const hasAdvancesFlags = groups.some((g) => g.advances !== null);
-  if (hasAdvancesFlags) {
-    for (const g of groups) {
-      if (g.advances) qualifiers.add(g.contestant_id);
-      else nonQualifiers.push(g.contestant_id);
-    }
-  } else if (groups.some((g) => g.time_seconds !== null)) {
-    // Auto-compute: top 2 per group + best 3rd overall
-    const thirds: CrockGroup[] = [];
-    for (const [, members] of grouped) {
-      const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
-      sorted.slice(0, 2).forEach((m) => qualifiers.add(m.contestant_id));
-      if (sorted[2]) thirds.push(sorted[2]);
-    }
-    // Best 3rd overall (lowest time)
-    if (thirds.length > 0) {
-      const bestThird = [...thirds].sort((a, b) => a.time_seconds! - b.time_seconds!)[0];
-      qualifiers.add(bestThird.contestant_id);
-    }
-    for (const g of groups) {
-      if (!qualifiers.has(g.contestant_id)) nonQualifiers.push(g.contestant_id);
-    }
-  }
-
-  // Knockout (round2) for qualifiers
-  if (r2.length > 0) {
-    const r2quals = r2.filter((r) => qualifiers.has(r.contestant_id)).sort((a, b) => a.time_seconds - b.time_seconds);
-    r2quals.forEach((r, i) => { out[r.contestant_id] = { points: POINTS[i + 1] ?? 0, isProvisional: false, rank: i + 1 }; });
-  }
-
-  // Non-qualifiers: rank by group position
-  const nonQSorted = nonQualifiers
-    .map((id) => ({ id, time: groups.find((g) => g.contestant_id === id)?.time_seconds ?? 99999 }))
-    .sort((a, b) => a.time - b.time);
-  const qualCount = r2.length > 0 ? r2.filter((r) => qualifiers.has(r.contestant_id)).length : 0;
-  nonQSorted.forEach((entry, i) => {
-    if (!out[entry.id]) {
-      const rank = (qualifiers.size) + i + 1;
-      out[entry.id] = { points: POINTS[rank] ?? 0, isProvisional: qualCount < qualifiers.size, rank };
-    }
+  // ── Final scoring (if entered) ────────────────────────────────
+  finals.sort((a, b) => a.time_seconds! - b.time_seconds!).forEach((f, i) => {
+    out[f.contestant_id] = { points: POINTS[i + 1] ?? 0, isProvisional: false, rank: i + 1 };
+  });
+  consolR2.sort((a, b) => a.time_seconds! - b.time_seconds!).forEach((f, i) => {
+    out[f.contestant_id] = { points: POINTS[i + 5] ?? 0, isProvisional: false, rank: i + 5 };
+  });
+  consolR1.sort((a, b) => a.time_seconds! - b.time_seconds!).forEach((f, i) => {
+    out[f.contestant_id] = { points: POINTS[i + 9] ?? 0, isProvisional: false, rank: i + 9 };
   });
 
-  // Provisionally rank qualifiers not yet in round2
-  let nextQRank = r2.filter((r) => qualifiers.has(r.contestant_id)).length + 1;
-  for (const id of qualifiers) {
-    if (!out[id]) {
-      out[id] = { points: POINTS[nextQRank] ?? 0, isProvisional: true, rank: nextQRank++ };
+  // ── R1 qualification ──────────────────────────────────────────
+  // Top 2 from each group advance; ties broken by admin (advances flag)
+  const r1Grouped = new Map<number, CrockGroup[]>();
+  for (const g of r1Groups) {
+    if (!r1Grouped.has(g.group_number)) r1Grouped.set(g.group_number, []);
+    r1Grouped.get(g.group_number)!.push(g);
+  }
+
+  const r1Qualifiers = new Set<string>();
+  const r1Seen = new Set<string>(); // deduplicate players in multiple groups (wildcard)
+
+  for (const [, members] of r1Grouped) {
+    const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
+    sorted.slice(0, 2).forEach((m) => r1Qualifiers.add(m.contestant_id));
+    members.forEach((m) => r1Seen.add(m.contestant_id));
+  }
+  // Admin overrides
+  for (const g of r1Groups) {
+    if (g.advances === true) r1Qualifiers.add(g.contestant_id);
+    if (g.advances === false) r1Qualifiers.delete(g.contestant_id);
+  }
+
+  // R1 non-qualifiers: players seen in R1 groups but not qualifying
+  // A wildcard who appears in both A/B and D: only count as non-qualifier if not in r1Qualifiers
+  const r1NonQualifiers = [...r1Seen].filter((id) => !r1Qualifiers.has(id));
+
+  // ── R2 group scoring (provisional if finals not yet entered) ──
+  if (r2Groups.length > 0) {
+    const r2Grouped = new Map<number, CrockGroup[]>();
+    for (const g of r2Groups) {
+      if (!r2Grouped.has(g.group_number)) r2Grouped.set(g.group_number, []);
+      r2Grouped.get(g.group_number)!.push(g);
     }
+
+    const r2FinalQuals: string[] = [];
+    const r2ConsolQuals: string[] = [];
+    for (const [, members] of r2Grouped) {
+      const sorted = members.filter((m) => m.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
+      sorted.slice(0, 2).forEach((m) => r2FinalQuals.push(m.contestant_id));
+      sorted.slice(2).forEach((m) => r2ConsolQuals.push(m.contestant_id));
+    }
+
+    r2FinalQuals.forEach((id, i) => {
+      if (!out[id]) out[id] = { points: POINTS[i + 1] ?? 0, isProvisional: true, rank: i + 1 };
+    });
+    r2ConsolQuals.forEach((id, i) => {
+      if (!out[id]) out[id] = { points: POINTS[i + 5] ?? 0, isProvisional: true, rank: i + 5 };
+    });
+    // R2 players assigned but not yet timed
+    let nextR2 = r2FinalQuals.length + r2ConsolQuals.length + 1;
+    for (const g of r2Groups) {
+      if (!out[g.contestant_id]) {
+        out[g.contestant_id] = { points: POINTS[nextR2] ?? 0, isProvisional: true, rank: nextR2++ };
+      }
+    }
+  } else {
+    // No R2 yet: provisionally rank R1 qualifiers 1-8
+    let rank = 1;
+    for (const id of r1Qualifiers) {
+      if (!out[id]) out[id] = { points: POINTS[rank] ?? 0, isProvisional: true, rank: rank++ };
+    }
+  }
+
+  // ── R1 consolation provisional (positions 9-11) ───────────────
+  if (consolR1.length === 0) {
+    const sorted = r1NonQualifiers
+      .map((id) => ({ id, time: r1Groups.filter((g) => g.contestant_id === id).map((g) => g.time_seconds).find((t) => t !== null) ?? 99999 }))
+      .sort((a, b) => a.time - b.time);
+    sorted.forEach(({ id }, i) => {
+      if (!out[id]) out[id] = { points: POINTS[i + 9] ?? 0, isProvisional: true, rank: i + 9 };
+    });
   }
 
   for (const c of contestants) {
@@ -399,6 +431,7 @@ export function computeLeaderboard(
   chessboardMatches: ChessboardMatch[] = [],
   livesStates: LivesGameState[] = [],
   crockGroups: CrockGroup[] = [],
+  crockFinals: CrockFinal[] = [],
 ): LeaderboardRow[] {
   const rows = contestants.map((contestant) => {
     const gameResults: Record<string, GameResult> = {};
@@ -416,7 +449,7 @@ export function computeLeaderboard(
           all = computeLivesGameResults(game.id, contestants, livesStates, round2);
           break;
         case "cup_format":
-          all = computeCupGameResults(game.id, contestants, crockGroups, round2);
+          all = computeCupGameResults(game.id, contestants, crockGroups, crockFinals);
           break;
         case "team_chess":
           all = computeChessboardResults(game.id, contestants, teamPlayers, teamRankings, chessboardMatches);
