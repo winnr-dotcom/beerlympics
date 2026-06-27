@@ -105,6 +105,31 @@ export function computePointsGameResults(
   return out;
 }
 
+// ── Direct points (the number you enter IS the score, e.g. Crock it) ──
+// No rank→points mapping: whatever the admin types is added to the leaderboard
+// as-is. Stored in round1_results.time_seconds. Rank is by points (desc) only
+// for ordering/medals; points are never transformed.
+
+export function computeDirectPointsResults(
+  gameId: string,
+  contestants: Contestant[],
+  round1: Round1Result[],
+): Record<string, GameResult> {
+  const rows = round1.filter((r) => r.game_id === gameId);
+  const sorted = [...rows].sort((a, b) => b.time_seconds - a.time_seconds);
+  const rankOf = new Map<string, number>();
+  sorted.forEach((r, i) => rankOf.set(r.contestant_id, i + 1));
+
+  const out: Record<string, GameResult> = {};
+  for (const c of contestants) {
+    const row = rows.find((r) => r.contestant_id === c.id);
+    out[c.id] = row
+      ? { points: row.time_seconds, isProvisional: false, rank: rankOf.get(c.id) ?? null }
+      : { points: null, isProvisional: false, rank: null };
+  }
+  return out;
+}
+
 // ── Individual race (lower is better, R1 = final, no playoff) ─
 
 export function computeRaceResults(
@@ -601,7 +626,8 @@ export function computeLeaderboard(
           all = computeNoPlayoffLivesResults(game.id, contestants, livesStates);
           break;
         case "cup_format":
-          all = computeCupGameResults(game.id, contestants, crockGroups, crockFinals);
+          // Crock it = pure direct points entry
+          all = computeDirectPointsResults(game.id, contestants, round1);
           break;
         case "team_chess":
           all = computeChessboardResults(game.id, contestants, teamPlayers, teamRankings, chessboardMatches);

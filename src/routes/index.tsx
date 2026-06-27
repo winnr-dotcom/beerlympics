@@ -272,51 +272,15 @@ function GameProgressModal({ game, data, onClose }: { game: BLGame; data: FetchA
     </>);
   };
 
-  // ── Crock it ──
+  // ── Crock it (pure direct points, higher = better) ──
   const renderCup = () => {
-    const r1g = data.crockGroups.filter((g) => g.game_id === game.id && g.stage === "r1");
-    const r2g = data.crockGroups.filter((g) => g.game_id === game.id && g.stage === "r2");
-    const finals = data.crockFinals.filter((f) => f.game_id === game.id);
-    if (r1g.length === 0) return <MEmpty msg="Groups not set up yet" />;
-    const GL: Record<number, string> = { 1: "A", 2: "B", 3: "C", 4: "D" };
-    const sortG = (arr: typeof r1g) => [...arr].sort((a, b) => {
-      if (a.time_seconds === null) return 1;
-      if (b.time_seconds === null) return -1;
-      return a.time_seconds - b.time_seconds;
-    });
+    const r1 = data.round1.filter((r) => r.game_id === game.id).sort((a, b) => b.time_seconds - a.time_seconds);
+    if (r1.length === 0) return <MEmpty msg="No points recorded yet" />;
+    const notYet = data.contestants.filter((c) => !r1.some((r) => r.contestant_id === c.id));
     return (<>
-      {[1,2,3,4].map((gn) => {
-        const members = sortG(r1g.filter((g) => g.group_number === gn));
-        if (members.length === 0) return null;
-        return (<div key={gn}>
-          <MSec label={`R1 — Group ${GL[gn]}`} color={gn === 4 ? "text-amber-400" : "text-zinc-300"} />
-          {members.map((g, i) => <MRow key={g.id} rank={g.time_seconds !== null ? i+1 : null}
-            name={getName(g.contestant_id)} value={g.time_seconds !== null ? formatTime(g.time_seconds) : "–"}
-            badge={g.time_seconds !== null && i < 2 ? "→R2" : undefined} badgeColor="text-green-400" />)}
-        </div>);
-      })}
-      {r2g.length > 0 && [1,2].map((gn) => {
-        const members = sortG(r2g.filter((g) => g.group_number === gn));
-        if (members.length === 0) return null;
-        return (<div key={gn}>
-          <MSec label={`R2 — Group ${gn}`} color="text-blue-400" />
-          {members.map((g, i) => <MRow key={g.id} rank={g.time_seconds !== null ? i+1 : null}
-            name={getName(g.contestant_id)} value={g.time_seconds !== null ? formatTime(g.time_seconds) : "–"}
-            badge={g.time_seconds !== null ? (i < 2 ? "→Final" : "→5-8") : undefined}
-            badgeColor={i < 2 ? "text-green-400" : "text-zinc-500"} />)}
-        </div>);
-      })}
-      {(["final","consol_r2","consol_r1"] as const).map((stage, si) => {
-        const fs = finals.filter((f) => f.stage === stage && f.time_seconds !== null).sort((a, b) => a.time_seconds! - b.time_seconds!);
-        if (fs.length === 0) return null;
-        const baseRank = [1,5,9][si];
-        const label = ["🏆 Final — 1st–4th", "5th–8th", "9th–11th"][si];
-        const color = ["text-amber-400","text-zinc-400","text-zinc-500"][si];
-        return (<div key={stage}>
-          <MSec label={label} color={color} />
-          {fs.map((f, i) => <MRow key={f.id} rank={baseRank+i} name={getName(f.contestant_id)} value={formatTime(f.time_seconds!)} top={stage === "final" && i === 0} />)}
-        </div>);
-      })}
+      <div className="px-4 py-2 text-xs text-zinc-500 border-b border-zinc-800/40">{r1.length}/{data.contestants.length} scored · higher is better</div>
+      {r1.map((r, i) => <MRow key={r.id} rank={i+1} name={getName(r.contestant_id)} value={String(r.time_seconds)} top={i===0} />)}
+      {notYet.map((c) => <MRow key={c.id} rank={null} name={getName(c.id)} value="–" />)}
     </>);
   };
 
@@ -503,13 +467,12 @@ function gameStatus(g: BLGame, data: FetchAllResult): { label: string; color: st
     else if (lc > 0) { label = `${elim}/5 out`; color = "text-yellow-400"; border = "border-yellow-800"; }
     else { label = "❤️ Lives"; }
   } else if (g.game_type === "cup_format") {
-    const gc = data.crockGroups.filter((g2) => g2.game_id === g.id).length;
-    const r2c = data.round2.filter((r) => r.game_id === g.id).length;
-    if (r2c >= 9) { label = "✓ Done"; color = "text-green-400"; border = "border-green-800"; }
-    else if (r2c > 0) { label = "Knockout"; color = "text-amber-400"; border = "border-amber-800"; }
-    else if (gc >= 11) { label = "Groups set"; color = "text-blue-400"; border = "border-blue-800"; }
-    else if (gc > 0) { label = `${gc}/11 set`; color = "text-yellow-400"; border = "border-yellow-800"; }
-    else { label = "🏆 Cup"; }
+    // Crock it = pure direct points
+    const n = data.contestants.length;
+    const scored = data.round1.filter((r) => r.game_id === g.id).length;
+    if (n > 0 && scored >= n) { label = "✓ Done"; color = "text-green-400"; border = "border-green-800"; }
+    else if (scored > 0) { label = `${scored}/${n}`; color = "text-yellow-400"; border = "border-yellow-800"; }
+    else { label = "🏆 Points"; }
   } else if (g.game_type === "team_chess") {
     const tp = data.teamPlayers.filter((p) => p.game_id === g.id).length;
     const tr = data.teamRankings.filter((r) => r.game_id === g.id && r.tiebreak_winner_id).length;
