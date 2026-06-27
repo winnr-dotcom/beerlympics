@@ -172,11 +172,11 @@ function TimesTab({ data, onMutate }: { data: FetchAllResult; onMutate: () => vo
       {game?.game_type === "individual_points" && (
         <CanBaseballPanel key={game.id} game={game} data={data} onMutate={onMutate} />
       )}
-      {(game?.game_type === "lives_bracket" || game?.game_type === "lives_no_playoff") && (
+      {game?.game_type === "lives_bracket" && (
         <LivesPanel key={game.id} game={game} data={data} onMutate={onMutate} />
       )}
-      {game?.game_type === "cup_format" && (
-        <CupFormatPanel key={game.id} game={game} data={data} onMutate={onMutate} />
+      {(game?.game_type === "cup_format" || game?.game_type === "lives_no_playoff") && (
+        <PurePointsPanel key={game.id} game={game} data={data} onMutate={onMutate} />
       )}
       {game?.game_type === "team_popp" && (
         <PoppKoppenPanel key={game.id} game={game} data={data} onMutate={onMutate} />
@@ -1447,9 +1447,9 @@ function CrockFinalRow({
   );
 }
 
-function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
-  // Crock it is now pure direct points: the number entered per player is added
-  // to the leaderboard as-is (stored in round1_results).
+// Pure direct points entry (Crock it, Slap Cup): the number entered per player
+// is added to the leaderboard as-is (stored in round1_results).
+function PurePointsPanel({ game, data, onMutate }: { game: BLGame; data: FetchAllResult; onMutate: () => void }) {
   const r1 = data.round1.filter((r) => r.game_id === game.id);
   const [scores, setScores] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -1474,7 +1474,7 @@ function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAll
   }
 
   async function handleResetAll() {
-    if (!confirm("Clear all Crock it points?")) return;
+    if (!confirm(`Clear all ${game.name} points?`)) return;
     setSaving(true);
     await Promise.all(r1.map((r) => deleteRound1(r.contestant_id, game.id)));
     setScores(() => { const m: Record<string, string> = {}; for (const c of data.contestants) m[c.id] = ""; return m; });
@@ -1487,7 +1487,7 @@ function CupFormatPanel({ game, data, onMutate }: { game: BLGame; data: FetchAll
     <div className="rounded-xl border border-zinc-800 overflow-hidden">
       <div className="bg-zinc-900/70 px-4 py-3 border-b border-zinc-800 flex items-center justify-between gap-3">
         <div>
-          <h3 className="font-semibold text-zinc-200">Crock it — Points</h3>
+          <h3 className="font-semibold text-zinc-200">{game.name} — Points</h3>
           <p className="text-xs text-zinc-500 mt-0.5">Type each player's points. The number you enter is added to the leaderboard as-is.</p>
         </div>
         <div className="flex gap-2 shrink-0">

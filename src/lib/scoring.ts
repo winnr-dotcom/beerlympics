@@ -627,7 +627,8 @@ export function computeLeaderboard(
           all = computeLivesGameResults(game.id, contestants, livesStates, round2);
           break;
         case "lives_no_playoff":
-          all = computeNoPlayoffLivesResults(game.id, contestants, livesStates);
+          // Slap Cup = pure direct points entry
+          all = computeDirectPointsResults(game.id, contestants, round1);
           break;
         case "cup_format":
           // Crock it = pure direct points entry

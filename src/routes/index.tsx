@@ -401,8 +401,8 @@ function GameProgressModal({ game, data, onClose }: { game: BLGame; data: FetchA
   const content = (() => {
     if (game.game_type === "individual" || game.game_type === "individual_race") return renderIndividual();
     if (game.game_type === "individual_points") return renderPoints();
-    if (game.game_type === "lives_bracket" || game.game_type === "lives_no_playoff") return renderLives();
-    if (game.game_type === "cup_format") return renderCup();
+    if (game.game_type === "lives_bracket") return renderLives();
+    if (game.game_type === "cup_format" || game.game_type === "lives_no_playoff") return renderCup();
     if (game.game_type === "team_chess") return renderChess();
     if (game.game_type === "team_popp") return renderPopp();
     return <MEmpty msg="No data" />;
@@ -461,14 +461,8 @@ function gameStatus(g: BLGame, data: FetchAllResult): { label: string; color: st
     else if (elim >= 5) { label = "Ready KO"; color = "text-blue-400"; border = "border-blue-800"; }
     else if (lc > 0) { label = `${elim}/5 out`; color = "text-yellow-400"; border = "border-yellow-800"; }
     else { label = "❤️ Lives"; }
-  } else if (g.game_type === "lives_no_playoff") {
-    const lc = data.livesStates.filter((s) => s.game_id === g.id).length;
-    const elim = data.livesStates.filter((s) => s.game_id === g.id && s.eliminated_order !== null).length;
-    if (elim >= 5) { label = "✓ Done"; color = "text-green-400"; border = "border-green-800"; }
-    else if (lc > 0) { label = `${elim}/5 out`; color = "text-yellow-400"; border = "border-yellow-800"; }
-    else { label = "❤️ Lives"; }
-  } else if (g.game_type === "cup_format") {
-    // Crock it = pure direct points
+  } else if (g.game_type === "cup_format" || g.game_type === "lives_no_playoff") {
+    // Crock it & Slap Cup = pure direct points
     const n = data.contestants.length;
     const scored = data.round1.filter((r) => r.game_id === g.id).length;
     if (n > 0 && scored >= n) { label = "✓ Done"; color = "text-green-400"; border = "border-green-800"; }
