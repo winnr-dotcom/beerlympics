@@ -294,19 +294,20 @@ function GameProgressModal({ game, data, onClose }: { game: BLGame; data: FetchA
       return ms.map((m) => getName(m.contestant_id)).join(" & ") || `Team ${t}`;
     };
     const activeTeams = new Set([1,2,3,4,5,6].filter((t) => gamePlayers.some((p) => p.team_number === t)));
+    const isPlayed = (m: typeof gameMatches[number]) => m.score_a !== null && m.score_b !== null;
     const ranksMap = computeChessboardTeamRanks(game.id, data.chessboardMatches);
     const pts = new Map<number,number>(), gf = new Map<number,number>(), ga = new Map<number,number>(), pl = new Map<number,number>();
     for (const t of activeTeams) { pts.set(t,0); gf.set(t,0); ga.set(t,0); pl.set(t,0); }
-    for (const m of gameMatches.filter((m) => m.winner_team !== null)) {
+    for (const m of gameMatches.filter(isPlayed)) {
       const sa = m.score_a??0, sb = m.score_b??0;
       gf.set(m.team_a,(gf.get(m.team_a)??0)+sa); ga.set(m.team_a,(ga.get(m.team_a)??0)+sb);
       gf.set(m.team_b,(gf.get(m.team_b)??0)+sb); ga.set(m.team_b,(ga.get(m.team_b)??0)+sa);
       pl.set(m.team_a,(pl.get(m.team_a)??0)+1); pl.set(m.team_b,(pl.get(m.team_b)??0)+1);
-      if (m.winner_team===1) pts.set(m.team_a,(pts.get(m.team_a)??0)+3);
-      else if (m.winner_team===2) pts.set(m.team_b,(pts.get(m.team_b)??0)+3);
+      if (sa>sb) pts.set(m.team_a,(pts.get(m.team_a)??0)+3);
+      else if (sb>sa) pts.set(m.team_b,(pts.get(m.team_b)??0)+3);
       else { pts.set(m.team_a,(pts.get(m.team_a)??0)+1); pts.set(m.team_b,(pts.get(m.team_b)??0)+1); }
     }
-    const played = gameMatches.filter((m) => m.winner_team !== null).length;
+    const played = gameMatches.filter(isPlayed).length;
     const sorted = [...ranksMap.entries()].filter(([t]) => activeTeams.has(t)).sort((a,b) => a[1]-b[1]);
     return (<>
       <div className="px-4 py-2 text-xs text-zinc-500 border-b border-zinc-800/40">{played}/{CHESS_PAIRS.length} matches played</div>
@@ -333,11 +334,11 @@ function GameProgressModal({ game, data, onClose }: { game: BLGame; data: FetchA
       </table>
       {played > 0 && (<>
         <div className="px-4 py-2 text-xs font-semibold text-zinc-400 border-t border-zinc-800/50 mt-1">Results</div>
-        {CHESS_PAIRS.filter(([ta,tb]) => gameMatches.some((m)=>m.team_a===ta&&m.team_b===tb&&m.winner_team!==null)).map(([ta,tb]) => {
+        {CHESS_PAIRS.filter(([ta,tb]) => gameMatches.some((m)=>m.team_a===ta&&m.team_b===tb&&isPlayed(m))).map(([ta,tb]) => {
           const m = gameMatches.find((m)=>m.team_a===ta&&m.team_b===tb)!;
           return (<div key={`${ta}-${tb}`} className="flex items-center gap-2 px-4 py-1.5 border-b border-zinc-800/30 text-xs">
             <span className="flex-1 text-zinc-300">{getTeamName(ta)} vs {getTeamName(tb)}</span>
-            <span className={`font-mono ${m.winner_team===0?"text-zinc-500":"text-amber-400"}`}>{m.score_a}–{m.score_b}</span>
+            <span className={`font-mono ${m.score_a===m.score_b?"text-zinc-500":"text-amber-400"}`}>{m.score_a}–{m.score_b}</span>
           </div>);
         })}
       </>)}
@@ -476,7 +477,7 @@ function gameStatus(g: BLGame, data: FetchAllResult): { label: string; color: st
   } else if (g.game_type === "team_chess") {
     const tp = data.teamPlayers.filter((p) => p.game_id === g.id).length;
     const tr = data.teamRankings.filter((r) => r.game_id === g.id && r.tiebreak_winner_id).length;
-    const matches = data.chessboardMatches.filter((m) => m.game_id === g.id && m.winner_team !== null).length;
+    const matches = data.chessboardMatches.filter((m) => m.game_id === g.id && m.score_a !== null && m.score_b !== null).length;
     if (tr === 5) { label = "✓ Done"; color = "text-green-400"; border = "border-green-800"; }
     else if (matches > 0) { label = `League ${matches}/10`; color = "text-amber-400"; border = "border-amber-800"; }
     else if (tp > 0) { label = "Teams set"; color = "text-blue-400"; border = "border-blue-800"; }

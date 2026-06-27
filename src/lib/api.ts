@@ -236,10 +236,13 @@ export async function upsertChessboardMatch(
   scoreA: number | null,
   scoreB: number | null,
 ) {
+  // NOTE: the DB has a CHECK constraint winner_team IN (1, 2), so a draw must be
+  // stored as null (not 0). "Played" and "draw" are derived from the scores
+  // (both scores present = played; equal scores = draw).
   const winnerTeam =
     scoreA === null || scoreB === null ? null :
     scoreA > scoreB ? 1 :
-    scoreA < scoreB ? 2 : 0;
+    scoreA < scoreB ? 2 : null;
   return supabase.from("chessboard_matches").upsert(
     {
       game_id: gameId,

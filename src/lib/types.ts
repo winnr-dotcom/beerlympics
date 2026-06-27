@@ -75,7 +75,7 @@ export type ChessboardMatch = {
   team_b: number;
   player_a_id: string | null;
   player_b_id: string | null;
-  winner_team: number | null; // 0=draw, 1=team_a, 2=team_b, null=not played
+  winner_team: number | null; // 1=team_a, 2=team_b, null=draw OR not played (use scores to tell apart)
   score_a: number | null;
   score_b: number | null;
   updated_at: string;

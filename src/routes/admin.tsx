@@ -1053,17 +1053,18 @@ function ChessboardLeague({ game, data, onMutate }: { game: BLGame; data: FetchA
   const pts = new Map(activeTeamNums.map((t) => [t, 0]));
   const gf  = new Map(activeTeamNums.map((t) => [t, 0]));
   const ga  = new Map(activeTeamNums.map((t) => [t, 0]));
-  for (const m of matches.filter((m) => m.winner_team !== null)) {
+  const isPlayed = (m: { score_a: number | null; score_b: number | null }) => m.score_a !== null && m.score_b !== null;
+  for (const m of matches.filter(isPlayed)) {
     const sa = m.score_a ?? 0, sb = m.score_b ?? 0;
     gf.set(m.team_a, (gf.get(m.team_a) ?? 0) + sa);
     ga.set(m.team_a, (ga.get(m.team_a) ?? 0) + sb);
     gf.set(m.team_b, (gf.get(m.team_b) ?? 0) + sb);
     ga.set(m.team_b, (ga.get(m.team_b) ?? 0) + sa);
-    if (m.winner_team === 1) pts.set(m.team_a, (pts.get(m.team_a) ?? 0) + 3);
-    else if (m.winner_team === 2) pts.set(m.team_b, (pts.get(m.team_b) ?? 0) + 3);
-    else if (m.winner_team === 0) { pts.set(m.team_a, (pts.get(m.team_a) ?? 0) + 1); pts.set(m.team_b, (pts.get(m.team_b) ?? 0) + 1); }
+    if (sa > sb) pts.set(m.team_a, (pts.get(m.team_a) ?? 0) + 3);
+    else if (sb > sa) pts.set(m.team_b, (pts.get(m.team_b) ?? 0) + 3);
+    else { pts.set(m.team_a, (pts.get(m.team_a) ?? 0) + 1); pts.set(m.team_b, (pts.get(m.team_b) ?? 0) + 1); }
   }
-  const played = matches.filter((m) => m.winner_team !== null).length;
+  const played = matches.filter(isPlayed).length;
 
   return (
     <div>
@@ -1119,7 +1120,7 @@ function ChessboardLeague({ game, data, onMutate }: { game: BLGame; data: FetchA
               getName={getName}
               onSave={async (playerAId, playerBId, scoreA, scoreB) => {
                 const { error } = await upsertChessboardMatch(game.id, ta, tb, playerAId, playerBId, scoreA, scoreB);
-                if (error) { toast.error("Save failed"); return; }
+                if (error) { toast.error(`Save failed: ${error.message ?? error.code ?? "unknown error"}`); return; }
                 toast.success(`${teamAName} vs ${teamBName} — result saved`);
                 onMutate();
               }}
@@ -1144,7 +1145,7 @@ function ChessMatchRow({ gameId, teamA, teamB, teamAName, teamBName, aMembers, b
   const [scoreA, setScoreA] = useState<string>(existing?.score_a?.toString() ?? "");
   const [scoreB, setScoreB] = useState<string>(existing?.score_b?.toString() ?? "");
   const [saving, setSaving] = useState(false);
-  const done = existing?.winner_team !== null && existing?.winner_team !== undefined;
+  const done = existing != null && existing.score_a !== null && existing.score_b !== null;
 
   const sa = parseInt(scoreA, 10), sb = parseInt(scoreB, 10);
   const canSave = !isNaN(sa) && !isNaN(sb);

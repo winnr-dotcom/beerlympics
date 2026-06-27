@@ -512,7 +512,8 @@ export function computeChessboardTeamRanks(
   gameId: string,
   matches: ChessboardMatch[],
 ): Map<number, number> {
-  const gameMatches = matches.filter((m) => m.game_id === gameId && m.winner_team !== null);
+  // A match is "played" when both scores are recorded; win/draw derive from them.
+  const gameMatches = matches.filter((m) => m.game_id === gameId && m.score_a !== null && m.score_b !== null);
 
   const pts   = new Map<number, number>([1, 2, 3, 4, 5, 6].map((t) => [t, 0]));
   const gf    = new Map<number, number>([1, 2, 3, 4, 5, 6].map((t) => [t, 0]));
@@ -525,11 +526,11 @@ export function computeChessboardTeamRanks(
     gf.set(m.team_b, (gf.get(m.team_b) ?? 0) + sb);
     ga.set(m.team_b, (ga.get(m.team_b) ?? 0) + sa);
 
-    if (m.winner_team === 1) {
+    if (sa > sb) {
       pts.set(m.team_a, (pts.get(m.team_a) ?? 0) + 3);
-    } else if (m.winner_team === 2) {
+    } else if (sb > sa) {
       pts.set(m.team_b, (pts.get(m.team_b) ?? 0) + 3);
-    } else if (m.winner_team === 0) {
+    } else {
       pts.set(m.team_a, (pts.get(m.team_a) ?? 0) + 1);
       pts.set(m.team_b, (pts.get(m.team_b) ?? 0) + 1);
     }
@@ -547,8 +548,11 @@ export function computeChessboardTeamRanks(
       (m) => (m.team_a === a[0] && m.team_b === b[0]) || (m.team_a === b[0] && m.team_b === a[0]),
     );
     if (h2h) {
-      const aWon = (h2h.team_a === a[0] && h2h.winner_team === 1) || (h2h.team_b === a[0] && h2h.winner_team === 2);
-      return aWon ? -1 : 1;
+      const hsa = h2h.score_a ?? 0, hsb = h2h.score_b ?? 0;
+      const aWon = (h2h.team_a === a[0] && hsa > hsb) || (h2h.team_b === a[0] && hsb > hsa);
+      const bWon = (h2h.team_a === b[0] && hsa > hsb) || (h2h.team_b === b[0] && hsb > hsa);
+      if (aWon) return -1;
+      if (bWon) return 1;
     }
     return a[0] - b[0];
   });
@@ -583,7 +587,7 @@ export function computeChessboardResults(
     });
   }
 
-  if (chessboardMatches.filter((m) => m.game_id === gameId && m.winner_team !== null).length === 0) {
+  if (chessboardMatches.filter((m) => m.game_id === gameId && m.score_a !== null && m.score_b !== null).length === 0) {
     return computeTeamGameResults(gameId, contestants, teamPlayers, storedRankings);
   }
   return computeTeamGameResults(gameId, contestants, teamPlayers, effectiveRankings);
